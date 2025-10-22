@@ -1,7 +1,7 @@
 # Core
 streamlit>=1.32,<1.51
 pandas>=2.1,<2.4
-numpy>=1.26,<2.2
+numpy==1.26.4  
 Pillow>=10,<12
 requests>=2.31,<2.33
 
