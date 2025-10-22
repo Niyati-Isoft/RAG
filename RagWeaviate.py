@@ -21,6 +21,8 @@ os.environ["TRANSFORMERS_NO_TF"] = "1"  # force Transformers to ignore TensorFlo
 import streamlit as st
 import pandas as pd
 from PIL import Image
+import weaviate
+from langchain_community.vectorstores import Weaviate as WeaviateVS
 
 # ---- Optional deps that may not exist everywhere ----
 def _optional_import(name, alias=None):
@@ -59,6 +61,23 @@ st.set_page_config(page_title="Multimedia Token-based RAG", layout="wide")
 st.title("🎛️ Multimedia Token-based RAG")
 
 with st.sidebar:
+    st.markdown("**Vector DB Backend**")
+    BACKEND = st.selectbox("Choose vector store", ["FAISS (local folder)", "Weaviate (remote)"], index=0)
+    
+    _WEAV = st.secrets.get("weaviate", {}) if hasattr(st, "secrets") else {}
+    DEF_WEAV_URL     = _WEAV.get("url", "")
+    DEF_WEAV_API_KEY = _WEAV.get("api_key", "")
+    DEF_WEAV_CLASS   = _WEAV.get("class", "RAGChunk")
+    DEF_TEXT_KEY     = _WEAV.get("text_key", "text")
+    
+    if BACKEND.endswith("(remote)"):
+        WEAVIATE_URL    = st.text_input("Weaviate REST URL", value=DEF_WEAV_URL)
+        WEAVIATE_APIKEY = st.text_input("Weaviate API Key", type="password", value=DEF_WEAV_API_KEY)
+        WEAV_INDEX      = st.text_input("Class / Index name", value=DEF_WEAV_CLASS)
+        WEAV_TEXT_KEY   = st.text_input("Text key (chunk text property)", value=DEF_TEXT_KEY)
+    else:
+        WEAVIATE_URL = WEAVIATE_APIKEY = WEAV_INDEX = WEAV_TEXT_KEY = ""
+
     st.subheader("⚙️ Setup")
     UPLOAD_DIR = Path(st.text_input("Upload directory", value="./uploads"))
     INDEX_DIR  = Path(st.text_input("Index directory",  value="D:\Isoft\4 DI\RAG\faiss_index"))
@@ -108,6 +127,42 @@ def get_embedder(name: str):
 
 tokenizer, llm = get_tokenizer_and_llm(HF_LLM_NAME)
 embedder       = get_embedder(EMBED_MODEL)
+
+@st.cache_resource(show_spinner=False)
+def get_weaviate_client(url: str, api_key: str):
+    if not url:
+        return None
+    auth = weaviate.AuthApiKey(api_key=api_key) if api_key else None
+    return weaviate.Client(url=url, auth_client_secret=auth)  # v3 REST client
+
+def build_index_weaviate(docs: List[Document], client: weaviate.Client,
+                         index_name: str, text_key: str, embedding):
+    """
+    Upsert docs into an existing Weaviate class (vectorizer=None).
+    Stores chunk text in `text_key`, metadata in `metadata`.
+    """
+    if not docs:
+        return None
+    db = WeaviateVS.from_documents(
+        documents=docs,
+        embedding=embedding,
+        client=client,
+        index_name=index_name,
+        text_key=text_key,
+    )
+    return db
+
+def load_index_weaviate(client: weaviate.Client, index_name: str, text_key: str, embedding):
+    try:
+        return WeaviateVS(
+            client=client,
+            index_name=index_name,
+            text_key=text_key,
+            embedding=embedding,
+        )
+    except Exception:
+        return None
+weav_client = get_weaviate_client(WEAVIATE_URL, WEAVIATE_APIKEY) if BACKEND.endswith("(remote)") else None
 
 # ========================= Chunking helpers =========================
 def chunk_by_hf_tokens(text: str,
@@ -661,37 +716,62 @@ with c2:
 st.caption(f"Non-web chunks: {len(st.session_state.all_docs_nonweb)}  |  Web chunks: {len(st.session_state.web_docs)}")
 
 # ========================= Build / Load Index =========================
-st.header("3) 🗂️ Vector DB (FAISS)")
+st.header("3) 🗂️ Vector DB")
 colb1, colb2, colb3 = st.columns(3)
+
 with colb1:
     if st.button("Build index from current docs"):
         all_docs = st.session_state.all_docs_nonweb + st.session_state.web_docs
-        db = build_index(all_docs, INDEX_DIR)
-        st.session_state.db = db
-        st.session_state.retriever = make_retriever(db, k, fetch_k, lambda_mult) if db else None
-        st.success(f"Index built at {INDEX_DIR}. Docs: {len(all_docs)}")
+        if BACKEND.startswith("FAISS"):
+            db = build_index(all_docs, INDEX_DIR)
+            st.session_state.db = db
+            st.session_state.retriever = make_retriever(db, k, fetch_k, lambda_mult) if db else None
+            st.success(f"[FAISS] Index built at {INDEX_DIR}. Docs: {len(all_docs)}")
+        else:
+            if not weav_client:
+                st.error("Weaviate not configured.")
+            else:
+                db = build_index_weaviate(all_docs, weav_client, WEAV_INDEX, WEAV_TEXT_KEY, embedder)
+                st.session_state.db = db
+                st.session_state.retriever = db.as_retriever(
+                    search_type="mmr",
+                    search_kwargs={"k": k, "fetch_k": fetch_k, "lambda_mult": lambda_mult}
+                ) if db else None
+                st.success(f"[Weaviate] Upserted {len(all_docs)} chunks into '{WEAV_INDEX}'.")
 
 with colb2:
     if st.button("Load existing index"):
-        db = load_index(INDEX_DIR)
-        st.session_state.db = db
-        st.session_state.retriever = make_retriever(db, k, fetch_k, lambda_mult) if db else None
-        st.success("Index loaded." if db else "No index found.")
+        if BACKEND.startswith("FAISS"):
+            db = load_index(INDEX_DIR)
+            st.session_state.db = db
+            st.session_state.retriever = make_retriever(db, k, fetch_k, lambda_mult) if db else None
+            st.success("Index loaded." if db else "No index found.")
+        else:
+            if not weav_client:
+                st.error("Weaviate not configured.")
+            else:
+                db = load_index_weaviate(weav_client, WEAV_INDEX, WEAV_TEXT_KEY, embedder)
+                st.session_state.db = db
+                st.session_state.retriever = db.as_retriever(
+                    search_type="mmr",
+                    search_kwargs={"k": k, "fetch_k": fetch_k, "lambda_mult": lambda_mult}
+                ) if db else None
+                st.success(f"[Weaviate] Connected to '{WEAV_INDEX}'.")
 
 with colb3:
     if st.button("Clear index folder"):
-        try:
-            shutil.rmtree(INDEX_DIR, ignore_errors=True)
-            INDEX_DIR.mkdir(parents=True, exist_ok=True)
-            st.session_state.db = None
-            st.session_state.retriever = None
-            st.success("Index folder cleared.")
-        except Exception as e:
-            st.error(f"Failed to clear: {e}")
+        if BACKEND.startswith("FAISS"):
+            try:
+                shutil.rmtree(INDEX_DIR, ignore_errors=True)
+                INDEX_DIR.mkdir(parents=True, exist_ok=True)
+                st.session_state.db = None
+                st.session_state.retriever = None
+                st.success("FAISS index folder cleared.")
+            except Exception as e:
+                st.error(f"Failed to clear: {e}")
+        else:
+            st.info("For Weaviate, delete objects via Weaviate console/admin script (not from the app).")
 
-retriever = st.session_state.get("retriever", None)
-if not retriever:
-    st.info("Build or load an index to enable retrieval & QA.")
 
 # ========================= Query / Preview / Answer =========================
 st.header("4) 🔎 Retrieve & 💬 Ask")
