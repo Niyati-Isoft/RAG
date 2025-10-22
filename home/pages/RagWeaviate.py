@@ -69,7 +69,7 @@ with st.sidebar:
     if BACKEND.endswith("(remote)"):
         WEAVIATE_URL    = st.text_input("Weaviate REST URL", value=_WEAV.get("url",""))
         WEAVIATE_APIKEY = st.text_input("Weaviate API Key", type="password", value=_WEAV.get("api_key",""))
-        WEAV_INDEX      = st.text_input("Class / Index name", value=_WEAV.get("class","RAGChunk"))
+        WEAV_INDEX      = st.text_input("Class / Index name", value=_WEAV.get("class","KBChunk"))
         WEAV_TEXT_KEY   = st.text_input("Text key (chunk text property)", value=_WEAV.get("text_key","text"))
     else:
         st.text_input("Index directory", key="faiss_dir", value=str(Path("./faiss_multimedia_index").resolve()))
