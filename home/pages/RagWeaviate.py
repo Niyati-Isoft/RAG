@@ -77,7 +77,7 @@ with st.sidebar:
 
     st.subheader("⚙️ Setup")
     UPLOAD_DIR = Path(st.text_input("Upload directory", value="./uploads"))
-    INDEX_DIR  = Path(st.text_input("Index directory",  value="D:\Isoft\4 DI\RAG\faiss_index"))
+    INDEX_DIR  = Path(st.text_input("Index directory",  value="./faiss_multimedia_index"))
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     INDEX_DIR.mkdir(parents=True, exist_ok=True)
 
