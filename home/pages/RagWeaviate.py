@@ -98,16 +98,19 @@ with st.sidebar:
     st.caption("If OCR/A/V isn’t working, install: tesseract-ocr & ffmpeg on your machine.")
 
 # ========================= Caches / Singletons =========================
-@st.cache_resource(show_spinner=False)
+
 @st.cache_resource(show_spinner=False)
 def get_tokenizer_and_llm(model_name: str):
     tok = AutoTokenizer.from_pretrained(model_name)
 
+    torch_dtype = torch.float16 if torch.cuda.is_available() else torch.float32
+
+    # NOTE: use torch_dtype (not dtype); do NOT set low_cpu_mem_usage or device_map
     model = AutoModelForSeq2SeqLM.from_pretrained(
         model_name,
-        torch_dtype=(torch.float16 if torch.cuda.is_available() else torch.float32),
-        low_cpu_mem_usage=True,
+        torch_dtype=torch_dtype,
     )
+
     if torch.cuda.is_available():
         model = model.to("cuda")
 
@@ -118,11 +121,10 @@ def get_tokenizer_and_llm(model_name: str):
         max_new_tokens=384,
         temperature=0.6,
         repetition_penalty=1.05,
-        # On CPU-only Streamlit Cloud, this keeps memory modest:
         device=0 if torch.cuda.is_available() else -1,
     )
-    llm = HuggingFacePipeline(pipeline=gen_pipe)
-    return tok, llm
+    return tok, HuggingFacePipeline(pipeline=gen_pipe)
+
 
 
 @st.cache_resource(show_spinner=False)

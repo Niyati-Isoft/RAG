@@ -5,24 +5,25 @@ numpy>=1.26,<2.2
 Pillow>=10,<12
 requests>=2.31,<2.33
 
-# LLM + embeddings
+# HF / LLM
 transformers>=4.40,<4.46
 sentence-transformers>=2.5,<3.0
-torch==2.2.2    # ✅ works perfectly on Python 3.11
+torch==2.2.2         # works on Python 3.11
 
-# LangChain + vectorstores
-langchain>=0.2,<0.3
-langchain-community>=0.2.10,<0.4
-langchain-huggingface>=0.0.3
+# LangChain
+langchain-core>=0.2
+langchain-community>=0.2
+langchain-huggingface>=0.0.6
 
-# Vector DB backends
+# Weaviate (LangChain vectorstore expects the v3 client)
 weaviate-client==3.26.7
-faiss-cpu>=1.7.4
 
-# Parsers / loaders
+# Optional loaders you’re using
 pdfplumber
 pypdf
 python-docx
 python-pptx
 beautifulsoup4
 trafilatura
+moviepy
+pytesseract
