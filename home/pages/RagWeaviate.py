@@ -63,20 +63,17 @@ st.title("🎛️ Multimedia Token-based RAG")
 with st.sidebar:
     st.markdown("**Vector DB Backend**")
     BACKEND = st.selectbox("Choose vector store", ["FAISS (local folder)", "Weaviate (remote)"], index=0)
-    
+
+    # Weaviate settings
     _WEAV = st.secrets.get("weaviate", {}) if hasattr(st, "secrets") else {}
-    DEF_WEAV_URL     = _WEAV.get("url", "")
-    DEF_WEAV_API_KEY = _WEAV.get("api_key", "")
-    DEF_WEAV_CLASS   = _WEAV.get("class", "RAGChunk")
-    DEF_TEXT_KEY     = _WEAV.get("text_key", "text")
-    
     if BACKEND.endswith("(remote)"):
-        WEAVIATE_URL    = st.text_input("Weaviate REST URL", value=DEF_WEAV_URL)
-        WEAVIATE_APIKEY = st.text_input("Weaviate API Key", type="password", value=DEF_WEAV_API_KEY)
-        WEAV_INDEX      = st.text_input("Class / Index name", value=DEF_WEAV_CLASS)
-        WEAV_TEXT_KEY   = st.text_input("Text key (chunk text property)", value=DEF_TEXT_KEY)
+        WEAVIATE_URL    = st.text_input("Weaviate REST URL", value=_WEAV.get("url",""))
+        WEAVIATE_APIKEY = st.text_input("Weaviate API Key", type="password", value=_WEAV.get("api_key",""))
+        WEAV_INDEX      = st.text_input("Class / Index name", value=_WEAV.get("class","RAGChunk"))
+        WEAV_TEXT_KEY   = st.text_input("Text key (chunk text property)", value=_WEAV.get("text_key","text"))
     else:
-        WEAVIATE_URL = WEAVIATE_APIKEY = WEAV_INDEX = WEAV_TEXT_KEY = ""
+        st.text_input("Index directory", key="faiss_dir", value=str(Path("./faiss_multimedia_index").resolve()))
+
 
     st.subheader("⚙️ Setup")
     UPLOAD_DIR = Path(st.text_input("Upload directory", value="./uploads"))
@@ -102,24 +99,31 @@ with st.sidebar:
 
 # ========================= Caches / Singletons =========================
 @st.cache_resource(show_spinner=False)
+@st.cache_resource(show_spinner=False)
 def get_tokenizer_and_llm(model_name: str):
     tok = AutoTokenizer.from_pretrained(model_name)
+
     model = AutoModelForSeq2SeqLM.from_pretrained(
         model_name,
-        dtype=torch.float16 if torch.cuda.is_available() else torch.float32
+        torch_dtype=(torch.float16 if torch.cuda.is_available() else torch.float32),
+        low_cpu_mem_usage=True,
     )
     if torch.cuda.is_available():
         model = model.to("cuda")
+
     gen_pipe = pipeline(
         task="text2text-generation",
         model=model,
         tokenizer=tok,
         max_new_tokens=384,
         temperature=0.6,
-        repetition_penalty=1.05
+        repetition_penalty=1.05,
+        # On CPU-only Streamlit Cloud, this keeps memory modest:
+        device=0 if torch.cuda.is_available() else -1,
     )
     llm = HuggingFacePipeline(pipeline=gen_pipe)
     return tok, llm
+
 
 @st.cache_resource(show_spinner=False)
 def get_embedder(name: str):
