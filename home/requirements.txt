@@ -1,0 +1,33 @@
+# Core app
+streamlit>=1.32,<1.51
+pandas>=2.1,<2.4
+numpy>=1.26,<2.2
+Pillow>=10,<12
+requests>=2.31,<2.33
+
+# LLM + embeddings
+transformers>=4.40,<4.46
+sentence-transformers>=2.5,<3.0
+torch>=2.2,<2.4
+
+# LangChain + vectorstores
+langchain>=0.2,<0.3
+langchain-community>=0.2.10,<0.4
+langchain-huggingface>=0.0.3
+
+# Vector DB backends
+weaviate-client==3.26.7
+faiss-cpu>=1.7.4
+
+# Parsers / loaders you use
+pdfplumber
+pypdf
+python-docx
+python-pptx
+beautifulsoup4
+trafilatura
+
+# Optional (if you’ll actually use them on Cloud; otherwise omit)
+# pytesseract
+# openai-whisper
+# moviepy
