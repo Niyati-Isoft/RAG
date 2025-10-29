@@ -69,7 +69,7 @@ with st.sidebar:
     if BACKEND.endswith("(remote)"):
         WEAVIATE_URL    = st.text_input("Weaviate REST URL", value=_WEAV.get("url",""))
         WEAVIATE_APIKEY = st.text_input("Weaviate API Key", type="password", value=_WEAV.get("api_key",""))
-        WEAV_INDEX      = st.text_input("Class / Index name", value=_WEAV.get("class","KBChunk"))
+        WEAV_INDEX      = st.text_input("Class / Index name", value=_WEAV.get("class","Rag_chunks"))
         WEAV_TEXT_KEY   = st.text_input("Text key (chunk text property)", value=_WEAV.get("text_key","text"))
     else:
         st.text_input("Index directory", key="faiss_dir", value=str(Path("./faiss_multimedia_index").resolve()))
@@ -141,14 +141,48 @@ def get_weaviate_client(url: str, api_key: str):
     auth = weaviate.AuthApiKey(api_key=api_key) if api_key else None
     return weaviate.Client(url=url, auth_client_secret=auth)  # v3 REST client
 
+
+import hashlib
+
+def _stable_id(s: str) -> str:
+    return hashlib.md5(s.encode("utf-8", errors="ignore")).hexdigest()
+
+def ensure_weav_schema(client, class_name: str, text_key: str = "text"):
+    """
+    Create/patch a class with the properties you showed:
+      doc_id, chunk_id, source, modality, page, slide, sheet, url,
+      start_sec, end_sec, text (vectorized via LC embeddings)
+    """
+    schema = client.schema.get()
+    names = {c["class"] for c in schema.get("classes", [])}
+    if class_name in names:
+        return  # already there
+
+    client.schema.create_class({
+        "class": class_name,
+        "description": "Stores text chunks and metadata for RAG retrieval.",
+        "vectorizer": "none",   # embeddings come from LangChain
+        "properties": [
+            {"name": "doc_id",     "dataType": ["text"],   "description": "Parent document id", "indexFilterable": True},
+            {"name": "chunk_id",   "dataType": ["text"],   "description": "Chunk id",           "indexFilterable": True},
+            {"name": "source",     "dataType": ["text"],   "description": "Original source path or file name", "indexFilterable": True},
+            {"name": "modality",   "dataType": ["text"],   "description": "document/web/table/text/image/audio", "indexFilterable": True},
+            {"name": "page",       "dataType": ["int"],    "description": "PDF page"},
+            {"name": "slide",      "dataType": ["int"],    "description": "PPTX slide"},
+            {"name": "sheet",      "dataType": ["text"],   "description": "Excel sheet"},
+            {"name": "url",        "dataType": ["text"],   "description": "Source URL if any", "indexFilterable": True},
+            {"name": "start_sec",  "dataType": ["number"], "description": "Audio/video segment start"},
+            {"name": "end_sec",    "dataType": ["number"], "description": "Audio/video segment end"},
+            {"name": text_key,     "dataType": ["text"],   "description": "Chunk text"}
+        ]
+    })
+
+
 def build_index_weaviate(docs: List[Document], client: weaviate.Client,
                          index_name: str, text_key: str, embedding):
-    """
-    Upsert docs into an existing Weaviate class (vectorizer=None).
-    Stores chunk text in `text_key`, metadata in `metadata`.
-    """
     if not docs:
         return None
+    ensure_weav_schema(client, index_name, text_key=text_key)
     db = WeaviateVS.from_documents(
         documents=docs,
         embedding=embedding,
@@ -158,16 +192,15 @@ def build_index_weaviate(docs: List[Document], client: weaviate.Client,
     )
     return db
 
+
 def load_index_weaviate(client: weaviate.Client, index_name: str, text_key: str, embedding):
     try:
-        return WeaviateVS(
-            client=client,
-            index_name=index_name,
-            text_key=text_key,
-            embedding=embedding,
-        )
+        ensure_weav_schema(client, index_name, text_key=text_key)
+        return WeaviateVS(client=client, index_name=index_name, text_key=text_key, embedding=embedding)
     except Exception:
         return None
+
+
 weav_client = get_weaviate_client(WEAVIATE_URL, WEAVIATE_APIKEY) if BACKEND.endswith("(remote)") else None
 
 # ========================= Chunking helpers =========================
@@ -189,8 +222,21 @@ def chunk_by_hf_tokens(text: str,
     return chunks
 
 def to_docs(chunks: Iterable[str], base_meta: Dict) -> List[Document]:
-    return [Document(page_content=c.strip(), metadata=base_meta.copy())
-            for c in chunks if c and str(c).strip()]
+    """
+    base_meta can contain: source, modality, page/slide/sheet/url/start_sec/end_sec
+    We add: doc_id (stable hash of source/url) and chunk_id (increment)
+    """
+    # derive a stable doc id from url or source
+    anchor = base_meta.get("url") or base_meta.get("source") or json.dumps(base_meta, sort_keys=True)
+    doc_id = _stable_id(anchor)
+
+    docs = []
+    for i, c in enumerate([x for x in chunks if x and str(x).strip()], start=1):
+        meta = base_meta.copy()
+        meta["doc_id"] = doc_id
+        meta["chunk_id"] = f"{doc_id}:{i}"
+        docs.append(Document(page_content=c.strip(), metadata=meta))
+    return docs
 
 # ========================= Loaders =========================
 
