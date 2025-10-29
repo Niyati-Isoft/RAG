@@ -604,6 +604,124 @@ def load_website_with_files(roots: List[str],
     return all_docs
 
 
+# ---- Pretty chunking preview (works for web + local files) ----
+import os, re
+from urllib.parse import urlparse
+from collections import defaultdict
+import streamlit as st
+
+FILE_EXTS = {".pdf", ".docx", ".pptx", ".csv", ".xlsx", ".txt", ".md", ".html"}
+
+def _ext_from_path(path: str) -> str:
+    try:
+        # works for both URLs and local paths
+        p = urlparse(path).path if "://" in path else path
+        ext = os.path.splitext(p)[1].lower()
+        return ext
+    except Exception:
+        return ""
+
+def _is_page_like(url: str) -> bool:
+    """
+    Treat as a 'page' if it ends with / or has no file ext (typical website pages).
+    """
+    p = urlparse(url).path
+    ext = os.path.splitext(p)[1].lower()
+    return (not ext) or ext in {"", ".html", ".htm", ".php", ".asp", ".aspx", ".jsp"}
+
+def show_chunking_preview(docs, title="Ingestion (token-chunk → Documents)", max_items=40):
+    """
+    docs: list[langchain_core.documents.Document]
+    Renders a summary like:
+      Start: https://example.com
+        ✓ Page [1]: https://example.com/a  (+6 chunks)
+        ↳ File [1]: https://example.com/report.pdf  (+112 chunks)
+      File: /path/to/local.pdf  (+37 chunks)
+    """
+    if not docs:
+        st.info("No documents to preview.")
+        return
+
+    # Split by modality for friendlier output
+    by_modality = defaultdict(list)
+    for d in docs:
+        m = (d.metadata or {}).get("modality") or "unknown"
+        by_modality[m].append(d)
+
+    st.markdown(f"### 2) 🔁 {title}")
+
+    # ---------- WEB ----------
+    web_docs = by_modality.get("web", [])
+    if web_docs:
+        # Determine a "root" (first host)
+        first_url = (web_docs[0].metadata.get("url")
+                     or web_docs[0].metadata.get("source") or "")
+        parsed = urlparse(first_url) if "://" in first_url else None
+        root = f"{parsed.scheme}://{parsed.netloc}" if parsed else first_url
+        st.markdown(f"🌐 **Start:** [{root}]({root})")
+
+        page_counts = defaultdict(int)
+        file_counts = defaultdict(int)
+        for d in web_docs:
+            url = d.metadata.get("url") or d.metadata.get("source") or ""
+            if not url:
+                continue
+            if _is_page_like(url):
+                page_counts[url] += 1
+            else:
+                file_counts[url] += 1
+
+        # Pages
+        if page_counts:
+            for i, (url, n) in enumerate(sorted(page_counts.items(), key=lambda x: x[1], reverse=True)[:max_items], 1):
+                st.markdown(f"  ✓ **Page [{i}]**: [{url}]({url})  _( +{n} chunks )_")
+
+        # Files (PDF/DOCX/…)
+        if file_counts:
+            for i, (url, n) in enumerate(sorted(file_counts.items(), key=lambda x: x[1], reverse=True)[:max_items], 1):
+                ext = _ext_from_path(url) or ""
+                st.markdown(f"  ↳ **File [{i}]**: [{url}]({url})  _( +{n} chunks )_")
+
+    # ---------- LOCAL / OTHER (documents, tables, images, audio...) ----------
+    other_modalities = [m for m in by_modality.keys() if m != "web"]
+    if other_modalities:
+        st.markdown("---")
+    for mod in other_modalities:
+        docs_m = by_modality[mod]
+        # Group by a stable display key (prefer file_name, then source)
+        groups = defaultdict(int)
+        for d in docs_m:
+            meta = d.metadata or {}
+            key = (meta.get("file_name")
+                   or meta.get("source")
+                   or meta.get("doc_id")
+                   or "Unknown")
+            groups[key] += 1
+
+        icon = {
+            "document": "📄",
+            "table": "📊",
+            "image": "🖼️",
+            "audio": "🎧",
+            "video": "🎬",
+            "text": "📝",
+            "unknown": "📦"
+        }.get(mod, "📦")
+
+        st.markdown(f"{icon} **{mod.title()} sources**")
+        for i, (key, n) in enumerate(sorted(groups.items(), key=lambda x: x[1], reverse=True)[:max_items], 1):
+            # Make local path look nice; link only if it’s a URL
+            if "://" in str(key):
+                st.markdown(f"  • **{i}.** [{key}]({key})  _( +{n} chunks )_")
+            else:
+                ext = _ext_from_path(str(key))
+                label = f"{os.path.basename(str(key))}" if os.path.exists(str(key)) else str(key)
+                if ext:
+                    st.markdown(f"  • **{i}.** {label}  `{ext}`  _( +{n} chunks )_")
+                else:
+                    st.markdown(f"  • **{i}.** {label}  _( +{n} chunks )_")
+
+
 # ========================= Build / Load FAISS =========================
 
 
