@@ -23,6 +23,8 @@ import pandas as pd
 from PIL import Image
 import weaviate
 from langchain_community.vectorstores import Weaviate as WeaviateVS
+from langchain_community.vectorstores import FAISS
+from langchain_community.vectorstores.utils import DistanceStrategy
 
 # ---- Optional deps that may not exist everywhere ----
 def _optional_import(name, alias=None):
@@ -132,7 +134,12 @@ def get_embedder(name: str):
     return HuggingFaceEmbeddings(model_name=name)
 
 tokenizer, llm = get_tokenizer_and_llm(HF_LLM_NAME)
-embedder       = get_embedder(EMBED_MODEL)
+from langchain_community.embeddings import HuggingFaceEmbeddings
+embedder = HuggingFaceEmbeddings(
+    model_name="sentence-transformers/all-MiniLM-L6-v2",
+    encode_kwargs={"normalize_embeddings": True}
+)
+
 
 @st.cache_resource(show_spinner=False)
 def get_weaviate_client(url: str, api_key: str):
@@ -598,12 +605,18 @@ def load_website_with_files(roots: List[str],
 
 
 # ========================= Build / Load FAISS =========================
+
+
 def build_index(docs: List[Document], index_dir: Path) -> Optional[FAISS]:
     if not docs:
         return None
     if index_dir.exists():
         shutil.rmtree(index_dir)
-    db = FAISS.from_documents(docs, embedder)
+    db = FAISS.from_documents(
+        docs,
+        embedder,
+        distance_strategy=DistanceStrategy.COSINE
+    )
     db.save_local(str(index_dir))
     return db
 
@@ -634,17 +647,28 @@ def get_docs(ret, query: str):
     except AttributeError:
         return ret.invoke(query)                   # new LC Runnable
 
-def preview_top_k_same_retriever_l2(query: str, ret, emb, k: int):
+import numpy as np
+
+def _cosine(a, b):
+    a = np.asarray(a, np.float32)
+    b = np.asarray(b, np.float32)
+    a /= np.linalg.norm(a) + 1e-9
+    b /= np.linalg.norm(b) + 1e-9
+    return float(np.dot(a, b))
+
+def preview_top_k_same_retriever_cos(query: str, ret, emb, k: int):
+    """Preview top-k docs using cosine similarity."""
     docs = get_docs(ret, query)[:k]
     q_vec = emb.embed_query(query)
     rows = []
     for d in docs:
-        # quick-and-simple distance (you could cache doc embeddings if you like)
         d_vec = emb.embed_query(d.page_content)
-        dist = float(np.linalg.norm(np.array(q_vec, dtype=np.float32) - np.array(d_vec, dtype=np.float32)))
-        rows.append((d, dist))
-    rows.sort(key=lambda x: x[1])
+        sim = _cosine(q_vec, d_vec)
+        rows.append((d, sim))
+    # higher cosine = better match
+    rows.sort(key=lambda x: x[1], reverse=True)
     return rows
+
 
 def format_docs_for_context(docs: List[Document], max_chars=4000) -> str:
     lines = []
@@ -855,7 +879,7 @@ if retriever and q:
 
     # ---------- Stage 0: show preview ----------
     st.subheader("Preview Top-k")
-    rows = preview_top_k_same_retriever_l2(q, ret, embedder, k)
+    rows = preview_top_k_same_retriever_cos(q, ret, embedder, k)
     for i, (doc, dist) in enumerate(rows, 1):
         meta = doc.metadata
         cite = []
@@ -916,3 +940,5 @@ Draft answer:
 
 
 st.markdown("---")
+
+
