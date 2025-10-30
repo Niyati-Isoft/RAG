@@ -15,7 +15,6 @@ import os, re, io, json, math, time, tempfile, shutil, urllib.parse
 from pathlib import Path
 from typing import List, Dict, Iterable, Optional, Tuple, Set
 from collections import Counter
-import os
 os.environ["TRANSFORMERS_NO_TF"] = "1"  # force Transformers to ignore TensorFlow
 
 import streamlit as st
@@ -99,7 +98,18 @@ with st.sidebar:
     st.markdown("---")
     st.caption("If OCR/A/V isn’t working, install: tesseract-ocr & ffmpeg on your machine.")
 
+
+
+# All metadata keys our loaders create
+METADATA_KEYS = [
+    "source", "modality", "page", "slide", "sheet",
+    "url", "source_page", "start_sec", "end_sec"
+]
+
+
 # ========================= Caches / Singletons =========================
+
+
 
 @st.cache_resource(show_spinner=False)
 def get_tokenizer_and_llm(model_name: str):
@@ -154,42 +164,63 @@ import hashlib
 def _stable_id(s: str) -> str:
     return hashlib.md5(s.encode("utf-8", errors="ignore")).hexdigest()
 
-def ensure_weav_schema(client, class_name: str, text_key: str = "text"):
+def ensure_weaviate_schema(client: weaviate.Client, index_name: str, text_key: str):
     """
-    Create/patch a class with the properties you showed:
-      doc_id, chunk_id, source, modality, page, slide, sheet, url,
-      start_sec, end_sec, text (vectorized via LC embeddings)
+    Ensure class exists and has all properties needed for our metadata.
+    - text_key: chunk text (string)
+    - source/url/source_page/modality/sheet: string
+    - page/slide: int
+    - start_sec/end_sec: number (float)
     """
     schema = client.schema.get()
-    names = {c["class"] for c in schema.get("classes", [])}
-    if class_name in names:
-        return  # already there
+    classes = {c["class"]: c for c in schema.get("classes", [])}
+    if index_name not in classes:
+        client.schema.create_class({
+            "class": index_name,
+            "vectorizer": "none",  # we use external embeddings
+            "properties": [
+                {"name": text_key, "dataType": ["text"]},
 
-    client.schema.create_class({
-        "class": class_name,
-        "description": "Stores text chunks and metadata for RAG retrieval.",
-        "vectorizer": "none",   # embeddings come from LangChain
-        "properties": [
-            {"name": "doc_id",     "dataType": ["text"],   "description": "Parent document id", "indexFilterable": True},
-            {"name": "chunk_id",   "dataType": ["text"],   "description": "Chunk id",           "indexFilterable": True},
-            {"name": "source",     "dataType": ["text"],   "description": "Original source path or file name", "indexFilterable": True},
-            {"name": "modality",   "dataType": ["text"],   "description": "document/web/table/text/image/audio", "indexFilterable": True},
-            {"name": "page",       "dataType": ["int"],    "description": "PDF page"},
-            {"name": "slide",      "dataType": ["int"],    "description": "PPTX slide"},
-            {"name": "sheet",      "dataType": ["text"],   "description": "Excel sheet"},
-            {"name": "url",        "dataType": ["text"],   "description": "Source URL if any", "indexFilterable": True},
-            {"name": "start_sec",  "dataType": ["number"], "description": "Audio/video segment start"},
-            {"name": "end_sec",    "dataType": ["number"], "description": "Audio/video segment end"},
-            {"name": text_key,     "dataType": ["text"],   "description": "Chunk text"}
-        ]
-    })
+                {"name": "source", "dataType": ["text"]},
+                {"name": "url", "dataType": ["text"]},
+                {"name": "source_page", "dataType": ["text"]},
+                {"name": "modality", "dataType": ["text"]},
+                {"name": "sheet", "dataType": ["text"]},
+
+                {"name": "page", "dataType": ["int"]},
+                {"name": "slide", "dataType": ["int"]},
+
+                {"name": "start_sec", "dataType": ["number"]},
+                {"name": "end_sec", "dataType": ["number"]},
+            ],
+        })
+        return
+
+    # class exists → add any missing properties
+    existing_props = {p["name"] for p in classes[index_name].get("properties", [])}
+    # always ensure text_key exists
+    needed = {text_key, *METADATA_KEYS} - existing_props
+    for name in needed:
+        if name in {"page", "slide"}:
+            dtype = ["int"]
+        elif name in {"start_sec", "end_sec"}:
+            dtype = ["number"]
+        elif name == text_key:
+            dtype = ["text"]
+        else:
+            dtype = ["text"]
+        try:
+            client.schema.property.create(index_name, {"name": name, "dataType": dtype})
+        except Exception:
+            pass  # ok if already exists in a race
 
 
-def build_index_weaviate(docs: List[Document], client: weaviate.Client,
-                         index_name: str, text_key: str, embedding):
+def build_index_weaviate(docs, client, index_name, text_key, embedding):
     if not docs:
         return None
-    ensure_weav_schema(client, index_name, text_key=text_key)
+    ensure_weaviate_schema(client, index_name, text_key)
+
+    # upsert with from_documents (this writes the metadata)
     db = WeaviateVS.from_documents(
         documents=docs,
         embedding=embedding,
@@ -197,15 +228,29 @@ def build_index_weaviate(docs: List[Document], client: weaviate.Client,
         index_name=index_name,
         text_key=text_key,
     )
+    # Re-wrap with attributes so retrieval returns metadata
+    db = WeaviateVS(
+        client=client,
+        index_name=index_name,
+        text_key=text_key,
+        embedding=embedding,
+        attributes=[text_key, *METADATA_KEYS],
+    )
     return db
 
-
-def load_index_weaviate(client: weaviate.Client, index_name: str, text_key: str, embedding):
+def load_index_weaviate(client, index_name, text_key, embedding):
+    # ask for attributes explicitly so Documents have metadata
     try:
-        ensure_weav_schema(client, index_name, text_key=text_key)
-        return WeaviateVS(client=client, index_name=index_name, text_key=text_key, embedding=embedding)
+        return WeaviateVS(
+            client=client,
+            index_name=index_name,
+            text_key=text_key,
+            embedding=embedding,
+            attributes=[text_key, *METADATA_KEYS],
+        )
     except Exception:
         return None
+
 
 
 weav_client = get_weaviate_client(WEAVIATE_URL, WEAVIATE_APIKEY) if BACKEND.endswith("(remote)") else None
@@ -1041,19 +1086,30 @@ if retriever and q:
        # ========= Within preview display loop =========
         st.caption(doc.page_content[:400] + (" ..." if len(doc.page_content) > 400 else ""))
 
-        # ---- Add token count + metadata here ----
         from transformers import AutoTokenizer
-        @st.cache_resource
+
+        @st.cache_resource(show_spinner=False)
         def _mini_tokenizer():
             return AutoTokenizer.from_pretrained("sentence-transformers/all-MiniLM-L6-v2")
 
         tok = _mini_tokenizer()
-        text = doc.page_content
-        token_len = len(tok.encode(text, add_special_tokens=False))
-        st.caption(f"Tokens: {token_len}")
 
-        with st.expander("🔍 Chunk metadata"):
-            st.json(doc.metadata)
+        for i, (doc, score) in enumerate(rows, 1):
+            meta = dict(getattr(doc, "metadata", {}) or {})
+            text = getattr(doc, "page_content", "")
+            token_len = len(tok.encode(text, add_special_tokens=False))
+
+            # header line with cosine score
+            st.markdown(f"**[{i}] cos = {score:.4f}**")
+
+            # short text preview
+            st.caption((text[:400] + ("…" if len(text) > 400 else "")) or "(empty)")
+
+            # tokens + metadata
+            st.caption(f"Tokens: {token_len}")
+            with st.expander("🔍 Chunk metadata", expanded=False):
+                st.json(meta)
+
 
         # ----------------------------------------------
         st.markdown("---")
@@ -1093,8 +1149,7 @@ if retriever and q:
     if polish:
         POLISH_TEMPLATE = """
     Rewrite the draft answer for clarity and flow **without adding or changing any facts**.  
-    Use complete sentences and smooth transitions, but keep meaning identical.  
-    If the draft includes citations (e.g. [1], [2]), preserve them exactly.  
+    Use complete sentences and smooth transitions, but keep meaning identical.   
     Do NOT infer or imagine any new information outside the given context.
 
     Context (for reference only — do not introduce new facts):
