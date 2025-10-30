@@ -8,7 +8,7 @@
 # • Embeddings: sentence-transformers/all-MiniLM-L6-v2 → FAISS (L2)
 # • Retriever: MMR (k, fetch_k, lambda_mult) + optional modality filters
 # • RAG chain with FLAN-T5 via transformers.pipeline
-# • “Preview Top-k” with L2 distances and metadata (page/slide/timestamps)
+# • “Preview Top-k” with  distances and metadata (page/slide/timestamps)
 # • Save/Load FAISS index folder
 
 import os, re, io, json, math, time, tempfile, shutil, urllib.parse
@@ -605,10 +605,10 @@ def load_website_with_files(roots: List[str],
 
 
 # ---- Pretty chunking preview (works for web + local files) ----
-import os, re
+
 from urllib.parse import urlparse
 from collections import defaultdict
-import streamlit as st
+
 
 FILE_EXTS = {".pdf", ".docx", ".pptx", ".csv", ".xlsx", ".txt", ".md", ".html"}
 
@@ -754,10 +754,10 @@ def make_retriever(db: FAISS, k=3, fetch_k=20, lambda_mult=0.5, filt: Dict=None)
     )
 
 # ========================= Preview Top-k (with L2) =========================
-def _l2(a, b):
-    a = np.array(a, dtype=np.float32)
-    b = np.array(b, dtype=np.float32)
-    return float(np.linalg.norm(a - b))
+#def _l2(a, b):
+    #a = np.array(a, dtype=np.float32)
+    #b = np.array(b, dtype=np.float32)
+    #return float(np.linalg.norm(a - b))
 
 def get_docs(ret, query: str):
     try:
@@ -765,27 +765,42 @@ def get_docs(ret, query: str):
     except AttributeError:
         return ret.invoke(query)                   # new LC Runnable
 
+# ---------- Utilities ----------
 import numpy as np
+from functools import lru_cache
 
-def _cosine(a, b):
-    a = np.asarray(a, np.float32)
-    b = np.asarray(b, np.float32)
+def _cosine(a, b) -> float:
+    a = np.asarray(a, np.float32); b = np.asarray(b, np.float32)
     a /= np.linalg.norm(a) + 1e-9
     b /= np.linalg.norm(b) + 1e-9
     return float(np.dot(a, b))
 
+def get_docs(ret, query: str):
+    """Works across old/new LangChain retrievers."""
+    try:
+        return ret.get_relevant_documents(query)   # older LC
+    except AttributeError:
+        return ret.invoke(query)                   # LCEL Runnable
+
+# Cache embeddings to avoid re-encoding the same text in preview
+@lru_cache(maxsize=10_000)
+def _embed_cached(emb, text: str):
+    return tuple(emb.embed_query(text))  # tuple so it becomes hashable for cache
+
+# ---------- Preview (Cosine) ----------
 def preview_top_k_same_retriever_cos(query: str, ret, emb, k: int):
-    """Preview top-k docs using cosine similarity."""
+    """Preview top-k docs using cosine similarity (higher = better)."""
     docs = get_docs(ret, query)[:k]
-    q_vec = emb.embed_query(query)
+    q_vec = _embed_cached(emb, query)
     rows = []
     for d in docs:
-        d_vec = emb.embed_query(d.page_content)
+        d_vec = _embed_cached(emb, d.page_content)
         sim = _cosine(q_vec, d_vec)
         rows.append((d, sim))
-    # higher cosine = better match
     rows.sort(key=lambda x: x[1], reverse=True)
     return rows
+
+
 
 
 def format_docs_for_context(docs: List[Document], max_chars=4000) -> str:
@@ -998,65 +1013,101 @@ if retriever and q:
     # ---------- Stage 0: show preview ----------
     st.subheader("Preview Top-k")
     rows = preview_top_k_same_retriever_cos(q, ret, embedder, k)
-    for i, (doc, dist) in enumerate(rows, 1):
+
+    for i, (doc, sim) in enumerate(rows, 1):
         meta = doc.metadata
         cite = []
+
         if "url" in meta: cite.append(meta["url"])
-        if "source" in meta and "url" not in meta: cite.append(Path(meta["source"]).name)
+        if "source" in meta and "url" not in meta:
+            cite.append(Path(meta["source"]).name)
         if "page" in meta: cite.append(f"p.{meta['page']}")
         if "slide" in meta: cite.append(f"slide {meta['slide']}")
         if "start_sec" in meta or "end_sec" in meta:
             cite.append(f"{meta.get('start_sec','?')}–{meta.get('end_sec','?')}s")
-        st.markdown(f"**[{i}] L2 = {dist:.4f}** — " + " | ".join(cite))
-        st.caption(doc.page_content[:400] + ("..." if len(doc.page_content) > 400 else ""))
 
-    # ---------- Stage 1: RAG draft (factual) ----------
+        st.markdown(f"[{i}] **Cosine = {sim:.4f}**")
+        if cite:
+            st.caption(" • ".join(cite))
+
+       # ========= Within preview display loop =========
+        st.caption(doc.page_content[:400] + (" ..." if len(doc.page_content) > 400 else ""))
+
+        # ---- Add token count + metadata here ----
+        from transformers import AutoTokenizer
+        @st.cache_resource
+        def _mini_tokenizer():
+            return AutoTokenizer.from_pretrained("sentence-transformers/all-MiniLM-L6-v2")
+
+        tok = _mini_tokenizer()
+        text = doc.page_content
+        token_len = len(tok.encode(text, add_special_tokens=False))
+        st.caption(f"Tokens: {token_len}")
+
+        with st.expander("🔍 Chunk metadata"):
+            st.json(doc.metadata)
+
+        # ----------------------------------------------
+        st.markdown("---")
+
+
+        # ---------- Stage 1: RAG draft (factual) ----------
     RAG_TEMPLATE_DRAFT = """
-You are a factual assistant.
-Use ONLY the text inside <context> to answer the question.
-Include compact citations like [1], [2] tied to the provided snippets.
-If the context is insufficient, say you don't know.
+    You are a precise retrieval-augmented assistant.
 
-Question:
-{question}
+    Your job is to answer **only** using the text inside <context>. 
+    Do NOT add outside knowledge or assumptions.
+    If the context does not contain enough information, say exactly:
+    "I don’t know from the provided context."
 
-<context>
-{context}
-</context>
+    When multiple pieces of information conflict, summarize each perspective briefly.
 
-Draft answer:
-""".strip()
+    <context>
+    {context}
+    </context>
+
+    Question:
+    {question}
+
+    Write a short, factual draft answer using only this context.
+    Include small in-text citations like [1], [2] referring to chunk numbers if helpful.
+
+    Draft Answer:
+    """.strip()
+
     prompt_draft = PromptTemplate(template=RAG_TEMPLATE_DRAFT, input_variables=["question", "context"])
 
     # Build context once and reuse
     ctx, docs = build_context(ret, q)
     draft_answer = (prompt_draft | llm | StrOutputParser()).invoke({"question": q, "context": ctx})
 
-    # ---------- Stage 2: Polish (style/structure only; no new facts) ----------
+    # ---------- Stage 2: Polish (clarity only; no new facts) ----------
     if polish:
         POLISH_TEMPLATE = """
-                    Improve the draft answer using only information from the context.
-                    expand key ideas, and write in clear, complete sentences.
-                    If the draft is short, elaborate with concise supporting details from the context.
+    Rewrite the draft answer for clarity and flow **without adding or changing any facts**.  
+    Use complete sentences and smooth transitions, but keep meaning identical.  
+    If the draft includes citations (e.g. [1], [2]), preserve them exactly.  
+    Do NOT infer or imagine any new information outside the given context.
 
-                    Context:
-                    {context}
+    Context (for reference only — do not introduce new facts):
+    {context}
 
-                    Draft:
-                    {draft}
+    Draft Answer:
+    {draft}
 
-                    Polished answer:
-                    """.strip()
-        prompt_polish = PromptTemplate(template=POLISH_TEMPLATE, input_variables=["draft","context"])
+    Now provide the polished version below:
+
+    Polished Answer:
+    """.strip()
+
+        prompt_polish = PromptTemplate(template=POLISH_TEMPLATE, input_variables=["draft", "context"])
         polished_answer = (prompt_polish | llm | StrOutputParser()).invoke({"draft": draft_answer, "context": ctx})
 
         st.subheader("Polished Answer:")
         st.write(polished_answer)
+
     else:
-        st.subheader("Final Answer")
+        st.subheader("Final Answer:")
         st.write(draft_answer)
 
-
-st.markdown("---")
-
-
+    st.markdown("---")
