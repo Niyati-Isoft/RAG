@@ -769,34 +769,42 @@ def get_docs(ret, query: str):
 import numpy as np
 from functools import lru_cache
 
-def _cosine(a, b) -> float:
-    a = np.asarray(a, np.float32); b = np.asarray(b, np.float32)
-    a /= np.linalg.norm(a) + 1e-9
-    b /= np.linalg.norm(b) + 1e-9
+def _cosine(a, b):
+    a = np.asarray(a, np.float32)
+    b = np.asarray(b, np.float32)
+    a /= (np.linalg.norm(a) + 1e-9)
+    b /= (np.linalg.norm(b) + 1e-9)
     return float(np.dot(a, b))
 
 def get_docs(ret, query: str):
-    """Works across old/new LangChain retrievers."""
     try:
-        return ret.get_relevant_documents(query)   # older LC
+        # older LC retrievers
+        return ret.get_relevant_documents(query)
     except AttributeError:
-        return ret.invoke(query)                   # LCEL Runnable
+        # LCEL Runnable retriever
+        return ret.invoke(query)
+
 
 # Cache embeddings to avoid re-encoding the same text in preview
 @lru_cache(maxsize=10_000)
 def _embed_cached(emb, text: str):
     return tuple(emb.embed_query(text))  # tuple so it becomes hashable for cache
 
-# ---------- Preview (Cosine) ----------
+
 def preview_top_k_same_retriever_cos(query: str, ret, emb, k: int):
-    """Preview top-k docs using cosine similarity (higher = better)."""
+    """Preview top-k docs using cosine similarity without any external helpers."""
     docs = get_docs(ret, query)[:k]
-    q_vec = _embed_cached(emb, query)
+    q_vec = emb.embed_query(query)
+
     rows = []
     for d in docs:
-        d_vec = _embed_cached(emb, d.page_content)
+        # Some retrievers return Document; fall back to string if needed
+        text = getattr(d, "page_content", str(d))
+        d_vec = emb.embed_query(text)
         sim = _cosine(q_vec, d_vec)
         rows.append((d, sim))
+
+    # Higher cosine = better match
     rows.sort(key=lambda x: x[1], reverse=True)
     return rows
 
