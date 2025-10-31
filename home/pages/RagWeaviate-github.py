@@ -805,10 +805,38 @@ def make_retriever(db: FAISS, k=3, fetch_k=20, lambda_mult=0.5, filt: Dict=None)
     #return float(np.linalg.norm(a - b))
 
 def get_docs(ret, query: str):
+    """Robust retriever compatible with Weaviate + LangChain v0.3+."""
     try:
-        return ret.get_relevant_documents(query)   # older LC
+        # Try the new LCEL retriever API
+        return ret.invoke(query)
+    except KeyError as e:
+        # When GraphQL payload malformed or class key invalid
+        try:
+            vs = ret.vectorstore
+            results = vs.client.query.get(vs._index_name, [vs.text_key]) \
+                .with_near_text({"concepts": [query]}) \
+                .with_limit(5).do()
+            data = results.get("data", {}).get("Get", {})
+            key = next(iter(data.keys()), None)
+            if not key:
+                st.warning("⚠️ No documents found in Weaviate (empty result).")
+                return []
+            docs = []
+            for item in data[key]:
+                txt = item.get(vs.text_key, "")
+                meta = {k: v for k, v in item.items() if k != vs.text_key}
+                docs.append(Document(page_content=txt, metadata=meta))
+            return docs
+        except Exception as e2:
+            st.error(f"Retriever fallback failed: {e2}")
+            return []
     except AttributeError:
-        return ret.invoke(query)                   # new LC Runnable
+        # Old API fallback
+        try:
+            return ret.get_relevant_documents(query)
+        except Exception:
+            return []
+
 
 # ---------- Utilities ----------
 import numpy as np
