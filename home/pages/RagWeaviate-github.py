@@ -224,7 +224,7 @@ def ensure_weaviate_schema(client: weaviate.Client, index_name: str, text_key: s
             pass  # ok if already exists in a race
 
 
-d# >>> replace your load/build wrappers with these <<<
+# >>> replace your load/build wrappers with these <<<
 
 def build_index_weaviate(docs, client, index_name, text_key, embedding):
     if not docs:
