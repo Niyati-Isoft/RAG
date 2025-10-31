@@ -100,11 +100,15 @@ with st.sidebar:
 
 
 
-# All metadata keys our loaders create
 METADATA_KEYS = [
-    "doc_id","chunk_id","source_url"#, "modality", "page", #"slide", "sheet",
-   # "url", "source_page", "start_sec", "end_sec"
+    "doc_id", "chunk_id",
+    "source_type", "source_url", "file_name",
+    "embedding_model", "created_at",
+    # keep any you already use in the UI:
+    "source", "url", "modality", "page", "slide", "sheet",
+    "start_sec", "end_sec"
 ]
+
 
 
 # ========================= Caches / Singletons =========================
@@ -165,36 +169,41 @@ def _stable_id(s: str) -> str:
     return hashlib.md5(s.encode("utf-8", errors="ignore")).hexdigest()
 
 def ensure_weaviate_schema(client: weaviate.Client, index_name: str, text_key: str):
-    """
-    Ensure class exists and has all properties needed for our metadata.
-    - text_key: chunk text (string)
-    - source/url/source_page/modality/sheet: string
-    - page/slide: int
-    - start_sec/end_sec: number (float)
-    """
     schema = client.schema.get()
     classes = {c["class"]: c for c in schema.get("classes", [])}
+
+    base_props = [
+        {"name": text_key, "dataType": ["text"]},
+
+        {"name": "doc_id",          "dataType": ["text"]},
+        {"name": "chunk_id",        "dataType": ["text"]},
+        {"name": "source_type",     "dataType": ["text"]},
+        {"name": "source_url",      "dataType": ["text"]},
+        {"name": "file_name",       "dataType": ["text"]},
+        {"name": "embedding_model", "dataType": ["text"]},
+        {"name": "created_at",      "dataType": ["text"]},
+
+        {"name": "source",      "dataType": ["text"]},
+        {"name": "url",         "dataType": ["text"]},
+        {"name": "source_page", "dataType": ["text"]},
+        {"name": "modality",    "dataType": ["text"]},
+        {"name": "sheet",       "dataType": ["text"]},
+
+        {"name": "page",      "dataType": ["int"]},
+        {"name": "slide",     "dataType": ["int"]},
+        {"name": "start_sec", "dataType": ["number"]},
+        {"name": "end_sec",   "dataType": ["number"]},
+    ]
+
     if index_name not in classes:
         client.schema.create_class({
             "class": index_name,
-            "vectorizer": "none",  # we use external embeddings
-            "properties": [
-                {"name": text_key, "dataType": ["text"]},
-
-                {"name": "source", "dataType": ["text"]},
-                {"name": "url", "dataType": ["text"]},
-                {"name": "source_page", "dataType": ["text"]},
-                {"name": "modality", "dataType": ["text"]},
-                {"name": "sheet", "dataType": ["text"]},
-
-                {"name": "page", "dataType": ["int"]},
-                {"name": "slide", "dataType": ["int"]},
-
-                {"name": "start_sec", "dataType": ["number"]},
-                {"name": "end_sec", "dataType": ["number"]},
-            ],
+            "vectorizer": "none",  # using external embeddings
+            "properties": base_props,
         })
         return
+
+
 
     # class exists → add any missing properties
     existing_props = {p["name"] for p in classes[index_name].get("properties", [])}
@@ -460,6 +469,28 @@ def load_any_nonweb(path: str) -> List[Document]:
         raise ValueError(f"Unsupported file type: {ext}")
     return fn(path)
 
+# ========================= Metadata Enrichment =========================
+def enrich_docs(docs, source_type, source_url=None, file_path=None):
+    import uuid, time
+    from pathlib import Path
+    EMBED_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+
+    doc_id = str(uuid.uuid4())
+    file_name = Path(file_path).name if file_path else None
+
+    for i, d in enumerate(docs, 1):
+        m = dict(d.metadata or {})
+        m["doc_id"] = doc_id
+        m["chunk_id"] = f"{doc_id}-{i:04d}"
+        m["source_type"] = source_type
+        if source_url:
+            m["source_url"] = source_url
+        if file_name:
+            m["file_name"] = file_name
+        m["embedding_model"] = EMBED_MODEL
+        m["created_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        d.metadata = m
+    return docs
 
 
 
@@ -953,6 +984,7 @@ if existing_files:
     st.dataframe(pd.DataFrame(df_stats), use_container_width=True)
 
 # ========================= Ingestion Actions =========================
+
 st.header("2) 🔄 Ingestion (token-chunk → Documents)")
 def render_crawl_log(events: List[dict]):
     if not events:
@@ -970,35 +1002,45 @@ def render_crawl_log(events: List[dict]):
 c1, c2 = st.columns(2)
 with c1:
     if st.button("Ingest uploaded files"):
-        all_docs_nonweb = []
-        for p in existing_files:
-            try:
-                docs = load_any_nonweb(p)
-                all_docs_nonweb.extend(docs)
-            except Exception as e:
-                st.warning(f"Skip {Path(p).name}: {e}")
-        st.session_state.all_docs_nonweb = all_docs_nonweb
-        st.success(f"Loaded {len(all_docs_nonweb)} chunks from {len(existing_files)} files.")
+            all_docs_nonweb = []
+            for p in existing_files:
+                try:
+                    docs = load_any_nonweb(p)
+                    docs = enrich_docs(docs, source_type="file", file_path=p)  # ← add this
+                    all_docs_nonweb.extend(docs)
+                except Exception as e:
+                    st.warning(f"Skip {Path(p).name}: {e}")
+            st.session_state.all_docs_nonweb = all_docs_nonweb
+            st.success(f"Loaded {len(all_docs_nonweb)} chunks from {len(existing_files)} files.")
+            show_chunking_preview(all_docs_nonweb, title="Files (token-chunks → Documents)")  # optional preview
+
 
 with c2:
     if st.button("Crawl & ingest websites"):
-            raw = urls_text.replace("\n", ",")
-            web_urls = [u.strip() for u in raw.split(",") if u.strip()]
-            if not web_urls:
-                st.warning("No URLs provided.")
-            else:
-                web_docs, crawl_log = load_website_with_files(
-                    web_urls,
-                    same_host_only=same_host,
-                    max_pages=max_pages,
-                    max_files=max_files,
-                    return_log=True
-                )
-                st.session_state.web_docs = web_docs
-                st.success(f"Loaded {len(web_docs)} web chunks.")
-                # show the nice crawl list
-                with st.expander("Crawl log", expanded=True):
-                    render_crawl_log(crawl_log)
+        raw = urls_text.replace("\n", ",")
+        web_urls = [u.strip() for u in raw.split(",") if u.strip()]
+        if not web_urls:
+            st.warning("No URLs provided.")
+        else:
+            web_docs, crawl_log = load_website_with_files(
+                web_urls,
+                same_host_only=same_host,
+                max_pages=max_pages,
+                max_files=max_files,
+                return_log=True
+            )
+            # Enrich: if you want the root URL stored explicitly, do it per-doc from existing metadata
+            # (keeps correct source_url even when multiple roots are crawled)
+            for d in web_docs:
+                src = (d.metadata or {}).get("url") or (d.metadata or {}).get("source")
+            web_docs = enrich_docs(web_docs, source_type="web")  # ← add this (source_url taken from doc meta)
+
+            st.session_state.web_docs = web_docs
+            st.success(f"Loaded {len(web_docs)} web chunks.")
+            with st.expander("Crawl log", expanded=True):
+                render_crawl_log(crawl_log)
+            show_chunking_preview(web_docs, title="Web (token-chunks → Documents)")  # optional preview
+
 
 
 st.caption(f"Non-web chunks: {len(st.session_state.all_docs_nonweb)}  |  Web chunks: {len(st.session_state.web_docs)}")
@@ -1091,54 +1133,48 @@ if retriever and q:
 
     # ---------- Stage 0: show preview ----------
     st.subheader("Preview Top-k")
+
     rows = preview_top_k_same_retriever_cos(q, ret, embedder, k)
 
-    for i, (doc, sim) in enumerate(rows, 1):
-        meta = doc.metadata
-        cite = []
+    from transformers import AutoTokenizer
+    @st.cache_resource(show_spinner=False)
+    def _mini_tokenizer():
+        return AutoTokenizer.from_pretrained("sentence-transformers/all-MiniLM-L6-v2")
+    tok = _mini_tokenizer()
 
+    for i, (doc, sim) in enumerate(rows, 1):
+        meta = dict(getattr(doc, "metadata", {}) or {})
+        text = getattr(doc, "page_content", "")
+
+        # Optional citation bits from your metadata
+        cite = []
         if "url" in meta: cite.append(meta["url"])
         if "source" in meta and "url" not in meta:
+            from pathlib import Path
             cite.append(Path(meta["source"]).name)
-        if "page" in meta: cite.append(f"p.{meta['page']}")
+        if "page" in meta:  cite.append(f"p.{meta['page']}")
         if "slide" in meta: cite.append(f"slide {meta['slide']}")
         if "start_sec" in meta or "end_sec" in meta:
             cite.append(f"{meta.get('start_sec','?')}–{meta.get('end_sec','?')}s")
 
-        st.markdown(f"[{i}] **Cosine = {sim:.4f}**")
+        # Header line with cosine score + optional cite
+        st.markdown(f"**[{i}] Cosine = {sim:.4f}**")
         if cite:
             st.caption(" • ".join(cite))
 
-       # ========= Within preview display loop =========
-        st.caption(doc.page_content[:400] + (" ..." if len(doc.page_content) > 400 else ""))
+        # Short text preview
+        st.caption(text[:400] + (" ..." if len(text) > 400 else ""))
 
-        from transformers import AutoTokenizer
+        # Token count (MiniLM tokenizer)
+        token_len = len(tok.encode(text, add_special_tokens=False))
+        st.caption(f"Tokens: {token_len}")
 
-        @st.cache_resource(show_spinner=False)
-        def _mini_tokenizer():
-            return AutoTokenizer.from_pretrained("sentence-transformers/all-MiniLM-L6-v2")
+        # Metadata
+        with st.expander("🔍 Chunk metadata", expanded=False):
+            st.json(meta)
 
-        tok = _mini_tokenizer()
-
-        for i, (doc, score) in enumerate(rows, 1):
-            meta = dict(getattr(doc, "metadata", {}) or {})
-            text = getattr(doc, "page_content", "")
-            token_len = len(tok.encode(text, add_special_tokens=False))
-
-            # header line with cosine score
-            st.markdown(f"**[{i}] cos = {score:.4f}**")
-
-            # short text preview
-            st.caption((text[:400] + ("…" if len(text) > 400 else "")) or "(empty)")
-
-            # tokens + metadata
-            st.caption(f"Tokens: {token_len}")
-            with st.expander("🔍 Chunk metadata", expanded=False):
-                st.json(meta)
-
-
-        # ----------------------------------------------
         st.markdown("---")
+
 
 
         # ---------- Stage 1: RAG draft (factual) ----------
