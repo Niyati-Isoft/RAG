@@ -1087,13 +1087,6 @@ with colb3:
         else:
             st.info("For Weaviate, delete objects via Weaviate console/admin script (not from the app).")
 
-
-# ========================= Query / Preview / Answer =========================
-st.header("4) 🔎 Retrieve & 💬 Ask")
-q = st.text_input("Your question", value="High protein meal ideas")
-modality_filter = st.selectbox("Filter by modality (optional)",
-                               ["(none)","document","web","audio","video","image","table","text"], index=0)
-polish = st.checkbox("Polish the final answer")
 # ========================= Query / Preview / Answer =========================
 st.header("4) 🔎 Retrieve & 💬 Ask")
 
