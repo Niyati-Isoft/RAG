@@ -1179,62 +1179,62 @@ if retriever and q:
 
 
 
-    # ---------- Stage 1: RAG draft (factual) ----------
-RAG_TEMPLATE_DRAFT = """
-You are a precise retrieval-augmented assistant.
+        # ---------- Stage 1: RAG draft (factual) ----------
+    RAG_TEMPLATE_DRAFT = """
+    You are a precise retrieval-augmented assistant.
 
-Your job is to answer **only** using the text inside <context>. 
-Do NOT add outside knowledge or assumptions.
-If the context does not contain enough information, say exactly:
-"I don’t know from the provided context."
+    Your job is to answer **only** using the text inside <context>. 
+    Do NOT add outside knowledge or assumptions.
+    If the context does not contain enough information, say exactly:
+    "I don’t know from the provided context."
 
-When multiple pieces of information conflict, summarize each perspective briefly.
+    When multiple pieces of information conflict, summarize each perspective briefly.
 
-<context>
-{context}
-</context>
+    <context>
+    {context}
+    </context>
 
-Question:
-{question}
+    Question:
+    {question}
 
-Write a short, factual draft answer using only this context.
-Include small in-text citations like [1], [2] referring to chunk numbers if helpful.
+    Write a short, factual draft answer using only this context.
+    Include small in-text citations like [1], [2] referring to chunk numbers if helpful.
 
-Draft Answer:
-""".strip()
+    Draft Answer:
+    """.strip()
 
-prompt_draft = PromptTemplate(template=RAG_TEMPLATE_DRAFT, input_variables=["question", "context"])
+    prompt_draft = PromptTemplate(template=RAG_TEMPLATE_DRAFT, input_variables=["question", "context"])
 
-# Build context once and reuse
-ctx, docs = build_context(ret, q)
-draft_answer = (prompt_draft | llm | StrOutputParser()).invoke({"question": q, "context": ctx})
+    # Build context once and reuse
+    ctx, docs = build_context(ret, q)
+    draft_answer = (prompt_draft | llm | StrOutputParser()).invoke({"question": q, "context": ctx})
 
-# ---------- Stage 2: Polish (clarity only; no new facts) ----------
-if polish:
-    POLISH_TEMPLATE = """
-Rewrite the draft answer for clarity and flow **without adding or changing any facts**.  
-Use complete sentences and smooth transitions, but keep meaning identical.   
-Do NOT infer or imagine any new information outside the given context.
+    # ---------- Stage 2: Polish (clarity only; no new facts) ----------
+    if polish:
+        POLISH_TEMPLATE = """
+    Rewrite the draft answer for clarity and flow **without adding or changing any facts**.  
+    Use complete sentences and smooth transitions, but keep meaning identical.   
+    Do NOT infer or imagine any new information outside the given context.
 
-Context (for reference only — do not introduce new facts):
-{context}
+    Context (for reference only — do not introduce new facts):
+    {context}
 
-Draft Answer:
-{draft}
+    Draft Answer:
+    {draft}
 
-Now provide the polished version below:
+    Now provide the polished version below:
 
-Polished Answer:
-""".strip()
+    Polished Answer:
+    """.strip()
 
-    prompt_polish = PromptTemplate(template=POLISH_TEMPLATE, input_variables=["draft", "context"])
-    polished_answer = (prompt_polish | llm | StrOutputParser()).invoke({"draft": draft_answer, "context": ctx})
+        prompt_polish = PromptTemplate(template=POLISH_TEMPLATE, input_variables=["draft", "context"])
+        polished_answer = (prompt_polish | llm | StrOutputParser()).invoke({"draft": draft_answer, "context": ctx})
 
-    st.subheader("Polished Answer:")
-    st.write(polished_answer)
+        st.subheader("Polished Answer:")
+        st.write(polished_answer)
 
-else:
-    st.subheader("Final Answer:")
-    st.write(draft_answer)
+    else:
+        st.subheader("Final Answer:")
+        st.write(draft_answer)
 
-st.markdown("---")
+    st.markdown("---")
