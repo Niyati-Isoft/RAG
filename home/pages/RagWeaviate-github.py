@@ -842,38 +842,6 @@ def make_retriever(db: FAISS, k=3, fetch_k=20, lambda_mult=0.5, filt: Dict=None)
     #b = np.array(b, dtype=np.float32)
     #return float(np.linalg.norm(a - b))
 
-def get_docs(ret, query: str):
-    """Robust retriever compatible with Weaviate + LangChain v0.3+."""
-    try:
-        # Try the new LCEL retriever API
-        return ret.invoke(query)
-    except KeyError as e:
-        # When GraphQL payload malformed or class key invalid
-        try:
-            vs = ret.vectorstore
-            results = vs.client.query.get(vs._index_name, [vs.text_key]) \
-                .with_near_text({"concepts": [query]}) \
-                .with_limit(5).do()
-            data = results.get("data", {}).get("Get", {})
-            key = next(iter(data.keys()), None)
-            if not key:
-                st.warning("⚠️ No documents found in Weaviate (empty result).")
-                return []
-            docs = []
-            for item in data[key]:
-                txt = item.get(vs.text_key, "")
-                meta = {k: v for k, v in item.items() if k != vs.text_key}
-                docs.append(Document(page_content=txt, metadata=meta))
-            return docs
-        except Exception as e2:
-            st.error(f"Retriever fallback failed: {e2}")
-            return []
-    except AttributeError:
-        # Old API fallback
-        try:
-            return ret.get_relevant_documents(query)
-        except Exception:
-            return []
 
 
 # ---------- Utilities ----------
@@ -887,13 +855,7 @@ def _cosine(a, b):
     b /= (np.linalg.norm(b) + 1e-9)
     return float(np.dot(a, b))
 
-def get_docs(ret, query: str):
-    try:
-        # older LC retrievers
-        return ret.get_relevant_documents(query)
-    except AttributeError:
-        # LCEL Runnable retriever
-        return ret.invoke(query)
+
 
 
 # Cache embeddings to avoid re-encoding the same text in preview
