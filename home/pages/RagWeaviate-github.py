@@ -1093,118 +1093,89 @@ st.header("4) 🔎 Retrieve & 💬 Ask")
 q = st.text_input("Your question", value="High protein meal ideas")
 polish = st.checkbox("Polish the final answer")
 
-if retriever and q:
-    # Always use the active retriever (no modality filtering)
-    ret = retriever
-
-ret = retriever
 # ---------- helpers ----------
 def get_docs(ret, query: str):
-    return ret.invoke(query)
-                # LCEL Runnable API
+    return ret.invoke(query)  # LCEL Runnable API
 
 def build_context(ret, question: str, max_chars: int = 8000):
     docs = get_docs(ret, question)
     return format_docs_for_context(docs, max_chars=max_chars), docs
 
-# ---------- Stage 0: show preview ----------
-st.subheader("Preview Top-k")
-# --- HOTFIX: make Weaviate retriever use nearVector and only query existing props
-from langchain_community.vectorstores import Weaviate as WeaviateVS
 
-def _force_near_vector_and_safe_attrs(ret):
-    vs = getattr(ret, "vectorstore", None)
-    if not isinstance(vs, WeaviateVS):
-        return
+# ---------- Run retrieval only if retriever and question exist ----------
+if retriever and q:
+    # Always use the active retriever (no modality filtering)
+    ret = retriever
 
-    # 1) Force nearVector path (not nearText)
-    try:
-        vs._by_text = False
-    except Exception:
-        pass
+    # --- HOTFIX: make Weaviate retriever use nearVector and only query existing props ---
+    from langchain_community.vectorstores import Weaviate as WeaviateVS
 
-    # 2) Ask only for properties that exist
-    try:
-        # Grab existing props from schema
-        schema = vs._client.schema.get() if hasattr(vs, "_client") else vs.client.schema.get()
-        cls = None
-        for c in schema.get("classes", []):
-            if c.get("class") == getattr(vs, "_index_name", None) or c.get("class") == vs.index_name:
-                cls = c; break
-        existing = {p["name"] for p in (cls.get("properties", []) if cls else [])}
-
-        # current attributes var name differs across versions
-        attrs = getattr(vs, "_attributes", None)
-        if attrs is None:
-            attrs = getattr(vs, "attributes", None)
-
-        text_key = getattr(vs, "_text_key", None) or getattr(vs, "text_key", None)
-
-        safe = []
-        if attrs:
-            safe = [a for a in attrs if (a in existing) or (a == text_key)]
-        if not safe:
-            # fall back to only the text key to be 100% safe
-            safe = [text_key] if text_key else []
-
-        # write back
-        if hasattr(vs, "_attributes"):
-            vs._attributes = safe
-        else:
-            vs.attributes = safe
-    except Exception:
-        # worst case: only text key
-        text_key = getattr(vs, "_text_key", None) or getattr(vs, "text_key", None)
-        if text_key:
+    def _force_near_vector_and_safe_attrs(ret):
+        vs = getattr(ret, "vectorstore", None)
+        if not isinstance(vs, WeaviateVS):
+            return
+        try:
+            vs._by_text = False  # Force nearVector
+        except Exception:
+            pass
+        try:
+            schema = vs._client.schema.get() if hasattr(vs, "_client") else vs.client.schema.get()
+            cls = next((c for c in schema.get("classes", []) if c.get("class") in [getattr(vs, "_index_name", None), getattr(vs, "index_name", None)]), None)
+            existing = {p["name"] for p in (cls.get("properties", []) if cls else [])}
+            attrs = getattr(vs, "_attributes", None) or getattr(vs, "attributes", None)
+            text_key = getattr(vs, "_text_key", None) or getattr(vs, "text_key", None)
+            safe = [a for a in (attrs or []) if (a in existing) or (a == text_key)] or [text_key]
             if hasattr(vs, "_attributes"):
-                vs._attributes = [text_key]
+                vs._attributes = safe
             else:
-                vs.attributes = [text_key]
+                vs.attributes = safe
+        except Exception:
+            text_key = getattr(vs, "_text_key", None) or getattr(vs, "text_key", None)
+            if text_key:
+                if hasattr(vs, "_attributes"):
+                    vs._attributes = [text_key]
+                else:
+                    vs.attributes = [text_key]
 
-# call the hotfix on the active retriever
-_force_near_vector_and_safe_attrs(ret)
+    # Apply the hotfix to the retriever
+    _force_near_vector_and_safe_attrs(ret)
 
+    # ---------- Stage 0: show preview ----------
+    st.subheader("Preview Top-k")
+    rows = preview_top_k_same_retriever_cos(q, ret, embedder, k)
 
-rows = preview_top_k_same_retriever_cos(q, ret, embedder, k)
+    from transformers import AutoTokenizer
+    @st.cache_resource(show_spinner=False)
+    def _mini_tokenizer():
+        return AutoTokenizer.from_pretrained("sentence-transformers/all-MiniLM-L6-v2")
+    tok = _mini_tokenizer()
 
-from transformers import AutoTokenizer
-@st.cache_resource(show_spinner=False)
-def _mini_tokenizer():
-    return AutoTokenizer.from_pretrained("sentence-transformers/all-MiniLM-L6-v2")
-tok = _mini_tokenizer()
+    for i, (doc, sim) in enumerate(rows, 1):
+        meta = dict(getattr(doc, "metadata", {}) or {})
+        text = getattr(doc, "page_content", "")
 
-for i, (doc, sim) in enumerate(rows, 1):
-    meta = dict(getattr(doc, "metadata", {}) or {})
-    text = getattr(doc, "page_content", "")
+        cite = []
+        if "url" in meta: cite.append(meta["url"])
+        if "source" in meta and "url" not in meta:
+            from pathlib import Path
+            cite.append(Path(meta["source"]).name)
+        if "page" in meta:  cite.append(f"p.{meta['page']}")
+        if "slide" in meta: cite.append(f"slide {meta['slide']}")
+        if "start_sec" in meta or "end_sec" in meta:
+            cite.append(f"{meta.get('start_sec','?')}–{meta.get('end_sec','?')}s")
 
-    # Optional citation bits from your metadata
-    cite = []
-    if "url" in meta: cite.append(meta["url"])
-    if "source" in meta and "url" not in meta:
-        from pathlib import Path
-        cite.append(Path(meta["source"]).name)
-    if "page" in meta:  cite.append(f"p.{meta['page']}")
-    if "slide" in meta: cite.append(f"slide {meta['slide']}")
-    if "start_sec" in meta or "end_sec" in meta:
-        cite.append(f"{meta.get('start_sec','?')}–{meta.get('end_sec','?')}s")
+        st.markdown(f"**[{i}] Cosine = {sim:.4f}**")
+        if cite:
+            st.caption(" • ".join(cite))
 
-    # Header line with cosine score + optional cite
-    st.markdown(f"**[{i}] Cosine = {sim:.4f}**")
-    if cite:
-        st.caption(" • ".join(cite))
+        st.caption(text[:400] + (" ..." if len(text) > 400 else ""))
+        token_len = len(tok.encode(text, add_special_tokens=False))
+        st.caption(f"Tokens: {token_len}")
 
-    # Short text preview
-    st.caption(text[:400] + (" ..." if len(text) > 400 else ""))
+        with st.expander("🔍 Chunk metadata", expanded=False):
+            st.json(meta)
+        st.markdown("---")
 
-    # Token count (MiniLM tokenizer)
-    token_len = len(tok.encode(text, add_special_tokens=False))
-    st.caption(f"Tokens: {token_len}")
-
-    # Metadata
-    with st.expander("🔍 Chunk metadata", expanded=False):
-        st.json(meta)
-
-    st.markdown("---")
 
 
 
