@@ -1115,6 +1115,61 @@ if retriever and q:
 
     # ---------- Stage 0: show preview ----------
     st.subheader("Preview Top-k")
+    # --- HOTFIX: make Weaviate retriever use nearVector and only query existing props
+    from langchain_community.vectorstores import Weaviate as WeaviateVS
+
+    def _force_near_vector_and_safe_attrs(ret):
+        vs = getattr(ret, "vectorstore", None)
+        if not isinstance(vs, WeaviateVS):
+            return
+
+        # 1) Force nearVector path (not nearText)
+        try:
+            vs._by_text = False
+        except Exception:
+            pass
+
+        # 2) Ask only for properties that exist
+        try:
+            # Grab existing props from schema
+            schema = vs._client.schema.get() if hasattr(vs, "_client") else vs.client.schema.get()
+            cls = None
+            for c in schema.get("classes", []):
+                if c.get("class") == getattr(vs, "_index_name", None) or c.get("class") == vs.index_name:
+                    cls = c; break
+            existing = {p["name"] for p in (cls.get("properties", []) if cls else [])}
+
+            # current attributes var name differs across versions
+            attrs = getattr(vs, "_attributes", None)
+            if attrs is None:
+                attrs = getattr(vs, "attributes", None)
+
+            text_key = getattr(vs, "_text_key", None) or getattr(vs, "text_key", None)
+
+            safe = []
+            if attrs:
+                safe = [a for a in attrs if (a in existing) or (a == text_key)]
+            if not safe:
+                # fall back to only the text key to be 100% safe
+                safe = [text_key] if text_key else []
+
+            # write back
+            if hasattr(vs, "_attributes"):
+                vs._attributes = safe
+            else:
+                vs.attributes = safe
+        except Exception:
+            # worst case: only text key
+            text_key = getattr(vs, "_text_key", None) or getattr(vs, "text_key", None)
+            if text_key:
+                if hasattr(vs, "_attributes"):
+                    vs._attributes = [text_key]
+                else:
+                    vs.attributes = [text_key]
+
+    # call the hotfix on the active retriever
+    _force_near_vector_and_safe_attrs(ret)
+
 
     rows = preview_top_k_same_retriever_cos(q, ret, embedder, k)
 
