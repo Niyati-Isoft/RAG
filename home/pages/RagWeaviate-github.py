@@ -70,7 +70,7 @@ with st.sidebar:
     if BACKEND.endswith("(remote)"):
         WEAVIATE_URL    = st.text_input("Weaviate REST URL", value=_WEAV.get("url",""))
         WEAVIATE_APIKEY = st.text_input("Weaviate API Key", type="password", value=_WEAV.get("api_key",""))
-        WEAV_INDEX      = st.text_input("Class / Index name", value=_WEAV.get("class","Rag_chunks"))
+        WEAV_INDEX      = st.text_input("Class / Index name", value=_WEAV.get("class","RagChunks"))
         WEAV_TEXT_KEY   = st.text_input("Text key (chunk text property)", value=_WEAV.get("text_key","text"))
     else:
         st.text_input("Index directory", key="faiss_dir", value=str(Path("./faiss_multimedia_index").resolve()))
@@ -102,8 +102,8 @@ with st.sidebar:
 
 # All metadata keys our loaders create
 METADATA_KEYS = [
-    "source", "modality", "page", "slide", "sheet",
-    "url", "source_page", "start_sec", "end_sec"
+    "doc_id","chunk_id","source_url"#, "modality", "page", #"slide", "sheet",
+   # "url", "source_page", "start_sec", "end_sec"
 ]
 
 
@@ -880,8 +880,6 @@ def preview_top_k_same_retriever_cos(query: str, ret, emb, k: int):
     # Higher cosine = better match
     rows.sort(key=lambda x: x[1], reverse=True)
     return rows
-
-
 
 
 def format_docs_for_context(docs: List[Document], max_chars=4000) -> str:
