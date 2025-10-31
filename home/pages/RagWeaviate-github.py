@@ -1063,11 +1063,13 @@ with colb1:
             else:
                 db = build_index_weaviate(all_docs, weav_client, WEAV_INDEX, WEAV_TEXT_KEY, embedder)
                 st.session_state.db = db
+                # 🔁 Use plain similarity for Weaviate (avoid MMR GraphQL path)
                 st.session_state.retriever = db.as_retriever(
-                    search_type="mmr",
-                    search_kwargs={"k": k, "fetch_k": fetch_k, "lambda_mult": lambda_mult}
+                    search_type="similarity",
+                    search_kwargs={"k": k}
                 ) if db else None
                 st.success(f"[Weaviate] Upserted {len(all_docs)} chunks into '{WEAV_INDEX}'.")
+
 
 with colb2:
     if st.button("Load existing index"):
@@ -1082,9 +1084,10 @@ with colb2:
             else:
                 db = load_index_weaviate(weav_client, WEAV_INDEX, WEAV_TEXT_KEY, embedder)
                 st.session_state.db = db
+                # 🔁 Use plain similarity for Weaviate
                 st.session_state.retriever = db.as_retriever(
-                    search_type="mmr",
-                    search_kwargs={"k": k, "fetch_k": fetch_k, "lambda_mult": lambda_mult}
+                    search_type="similarity",
+                    search_kwargs={"k": k}
                 ) if db else None
                 st.success(f"[Weaviate] Connected to '{WEAV_INDEX}'.")
 
@@ -1121,11 +1124,8 @@ if retriever and q:
 
     # ---------- helpers ----------
     def get_docs(ret, query: str):
-        """Works across old/new LangChain retrievers."""
-        try:
-            return ret.get_relevant_documents(query)   # older API
-        except AttributeError:
-            return ret.invoke(query)                   # LCEL Runnable API
+        return ret.invoke(query)
+                   # LCEL Runnable API
 
     def build_context(ret, question: str, max_chars: int = 8000):
         docs = get_docs(ret, question)
