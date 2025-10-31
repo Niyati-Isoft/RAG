@@ -1091,15 +1091,42 @@ with colb3:
 st.header("4) 🔎 Retrieve & 💬 Ask")
 
 q = st.text_input("Your question", value="High protein meal ideas")
+
+# ========================= Question Token Summary =========================
+st.subheader("🔢 Question Token Summary")
+
+count_mode = st.radio(
+    "Token counter",
+    ["Embedder (MiniLM)", "LLM (FLAN-T5)"],
+    horizontal=True,
+    index=0,
+)
+
+from transformers import AutoTokenizer as HFAutoTokenizer
+
+@st.cache_resource(show_spinner=False)
+def _mini_tokenizer():
+    return HFAutoTokenizer.from_pretrained("sentence-transformers/all-MiniLM-L6-v2")
+
+# Pick ONE tokenizer for both question and preview chunks
+tok_for_counts = _mini_tokenizer() if count_mode.startswith("Embedder") else tokenizer
+
+if q.strip():
+    q_tokens = len(tok_for_counts.encode(q, add_special_tokens=False))
+    st.caption(f"Question tokens ({count_mode}): **{q_tokens}**")
+else:
+    st.caption("Enter a question above to see token counts.")
+
 polish = st.checkbox("Polish the final answer")
 
 # ---------- helpers ----------
 def get_docs(ret, query: str):
-    return ret.invoke(query)  # LCEL Runnable API
+    return ret.invoke(query)
 
 def build_context(ret, question: str, max_chars: int = 8000):
     docs = get_docs(ret, question)
     return format_docs_for_context(docs, max_chars=max_chars), docs
+
 
 
 # ---------- Run retrieval only if retriever and question exist ----------
@@ -1169,9 +1196,8 @@ if retriever and q:
             st.caption(" • ".join(cite))
 
         st.caption(text[:400] + (" ..." if len(text) > 400 else ""))
-        token_len = len(tok.encode(text, add_special_tokens=False))
-        st.caption(f"Tokens: {token_len}")
-
+        token_len = len(tok_for_counts.encode(text, add_special_tokens=False))
+        st.caption(f"Tokens ({count_mode}): {token_len}")
         with st.expander("🔍 Chunk metadata", expanded=False):
             st.json(meta)
         st.markdown("---")
