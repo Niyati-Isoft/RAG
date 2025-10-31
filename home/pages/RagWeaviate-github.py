@@ -1094,182 +1094,183 @@ q = st.text_input("Your question", value="High protein meal ideas")
 modality_filter = st.selectbox("Filter by modality (optional)",
                                ["(none)","document","web","audio","video","image","table","text"], index=0)
 polish = st.checkbox("Polish the final answer")
+# ========================= Query / Preview / Answer =========================
+st.header("4) 🔎 Retrieve & 💬 Ask")
+
+q = st.text_input("Your question", value="High protein meal ideas")
+polish = st.checkbox("Polish the final answer")
 
 if retriever and q:
-    # ---- pick the active retriever (with optional modality filter)
-    db = st.session_state.db
-    if modality_filter != "(none)":
-        ret = make_retriever(db, k=k, fetch_k=fetch_k, lambda_mult=lambda_mult,
-                             filt={"modality": modality_filter})
-    else:
-        ret = retriever
+    # Always use the active retriever (no modality filtering)
+    ret = retriever
 
-    # ---------- helpers ----------
-    def get_docs(ret, query: str):
-        return ret.invoke(query)
-                   # LCEL Runnable API
 
-    def build_context(ret, question: str, max_chars: int = 8000):
-        docs = get_docs(ret, question)
-        return format_docs_for_context(docs, max_chars=max_chars), docs
+# ---------- helpers ----------
+def get_docs(ret, query: str):
+    return ret.invoke(query)
+                # LCEL Runnable API
 
-    # ---------- Stage 0: show preview ----------
-    st.subheader("Preview Top-k")
-    # --- HOTFIX: make Weaviate retriever use nearVector and only query existing props
-    from langchain_community.vectorstores import Weaviate as WeaviateVS
+def build_context(ret, question: str, max_chars: int = 8000):
+    docs = get_docs(ret, question)
+    return format_docs_for_context(docs, max_chars=max_chars), docs
 
-    def _force_near_vector_and_safe_attrs(ret):
-        vs = getattr(ret, "vectorstore", None)
-        if not isinstance(vs, WeaviateVS):
-            return
+# ---------- Stage 0: show preview ----------
+st.subheader("Preview Top-k")
+# --- HOTFIX: make Weaviate retriever use nearVector and only query existing props
+from langchain_community.vectorstores import Weaviate as WeaviateVS
 
-        # 1) Force nearVector path (not nearText)
-        try:
-            vs._by_text = False
-        except Exception:
-            pass
+def _force_near_vector_and_safe_attrs(ret):
+    vs = getattr(ret, "vectorstore", None)
+    if not isinstance(vs, WeaviateVS):
+        return
 
-        # 2) Ask only for properties that exist
-        try:
-            # Grab existing props from schema
-            schema = vs._client.schema.get() if hasattr(vs, "_client") else vs.client.schema.get()
-            cls = None
-            for c in schema.get("classes", []):
-                if c.get("class") == getattr(vs, "_index_name", None) or c.get("class") == vs.index_name:
-                    cls = c; break
-            existing = {p["name"] for p in (cls.get("properties", []) if cls else [])}
+    # 1) Force nearVector path (not nearText)
+    try:
+        vs._by_text = False
+    except Exception:
+        pass
 
-            # current attributes var name differs across versions
-            attrs = getattr(vs, "_attributes", None)
-            if attrs is None:
-                attrs = getattr(vs, "attributes", None)
+    # 2) Ask only for properties that exist
+    try:
+        # Grab existing props from schema
+        schema = vs._client.schema.get() if hasattr(vs, "_client") else vs.client.schema.get()
+        cls = None
+        for c in schema.get("classes", []):
+            if c.get("class") == getattr(vs, "_index_name", None) or c.get("class") == vs.index_name:
+                cls = c; break
+        existing = {p["name"] for p in (cls.get("properties", []) if cls else [])}
 
-            text_key = getattr(vs, "_text_key", None) or getattr(vs, "text_key", None)
+        # current attributes var name differs across versions
+        attrs = getattr(vs, "_attributes", None)
+        if attrs is None:
+            attrs = getattr(vs, "attributes", None)
 
-            safe = []
-            if attrs:
-                safe = [a for a in attrs if (a in existing) or (a == text_key)]
-            if not safe:
-                # fall back to only the text key to be 100% safe
-                safe = [text_key] if text_key else []
+        text_key = getattr(vs, "_text_key", None) or getattr(vs, "text_key", None)
 
-            # write back
+        safe = []
+        if attrs:
+            safe = [a for a in attrs if (a in existing) or (a == text_key)]
+        if not safe:
+            # fall back to only the text key to be 100% safe
+            safe = [text_key] if text_key else []
+
+        # write back
+        if hasattr(vs, "_attributes"):
+            vs._attributes = safe
+        else:
+            vs.attributes = safe
+    except Exception:
+        # worst case: only text key
+        text_key = getattr(vs, "_text_key", None) or getattr(vs, "text_key", None)
+        if text_key:
             if hasattr(vs, "_attributes"):
-                vs._attributes = safe
+                vs._attributes = [text_key]
             else:
-                vs.attributes = safe
-        except Exception:
-            # worst case: only text key
-            text_key = getattr(vs, "_text_key", None) or getattr(vs, "text_key", None)
-            if text_key:
-                if hasattr(vs, "_attributes"):
-                    vs._attributes = [text_key]
-                else:
-                    vs.attributes = [text_key]
+                vs.attributes = [text_key]
 
-    # call the hotfix on the active retriever
-    _force_near_vector_and_safe_attrs(ret)
+# call the hotfix on the active retriever
+_force_near_vector_and_safe_attrs(ret)
 
 
-    rows = preview_top_k_same_retriever_cos(q, ret, embedder, k)
+rows = preview_top_k_same_retriever_cos(q, ret, embedder, k)
 
-    from transformers import AutoTokenizer
-    @st.cache_resource(show_spinner=False)
-    def _mini_tokenizer():
-        return AutoTokenizer.from_pretrained("sentence-transformers/all-MiniLM-L6-v2")
-    tok = _mini_tokenizer()
+from transformers import AutoTokenizer
+@st.cache_resource(show_spinner=False)
+def _mini_tokenizer():
+    return AutoTokenizer.from_pretrained("sentence-transformers/all-MiniLM-L6-v2")
+tok = _mini_tokenizer()
 
-    for i, (doc, sim) in enumerate(rows, 1):
-        meta = dict(getattr(doc, "metadata", {}) or {})
-        text = getattr(doc, "page_content", "")
+for i, (doc, sim) in enumerate(rows, 1):
+    meta = dict(getattr(doc, "metadata", {}) or {})
+    text = getattr(doc, "page_content", "")
 
-        # Optional citation bits from your metadata
-        cite = []
-        if "url" in meta: cite.append(meta["url"])
-        if "source" in meta and "url" not in meta:
-            from pathlib import Path
-            cite.append(Path(meta["source"]).name)
-        if "page" in meta:  cite.append(f"p.{meta['page']}")
-        if "slide" in meta: cite.append(f"slide {meta['slide']}")
-        if "start_sec" in meta or "end_sec" in meta:
-            cite.append(f"{meta.get('start_sec','?')}–{meta.get('end_sec','?')}s")
+    # Optional citation bits from your metadata
+    cite = []
+    if "url" in meta: cite.append(meta["url"])
+    if "source" in meta and "url" not in meta:
+        from pathlib import Path
+        cite.append(Path(meta["source"]).name)
+    if "page" in meta:  cite.append(f"p.{meta['page']}")
+    if "slide" in meta: cite.append(f"slide {meta['slide']}")
+    if "start_sec" in meta or "end_sec" in meta:
+        cite.append(f"{meta.get('start_sec','?')}–{meta.get('end_sec','?')}s")
 
-        # Header line with cosine score + optional cite
-        st.markdown(f"**[{i}] Cosine = {sim:.4f}**")
-        if cite:
-            st.caption(" • ".join(cite))
+    # Header line with cosine score + optional cite
+    st.markdown(f"**[{i}] Cosine = {sim:.4f}**")
+    if cite:
+        st.caption(" • ".join(cite))
 
-        # Short text preview
-        st.caption(text[:400] + (" ..." if len(text) > 400 else ""))
+    # Short text preview
+    st.caption(text[:400] + (" ..." if len(text) > 400 else ""))
 
-        # Token count (MiniLM tokenizer)
-        token_len = len(tok.encode(text, add_special_tokens=False))
-        st.caption(f"Tokens: {token_len}")
+    # Token count (MiniLM tokenizer)
+    token_len = len(tok.encode(text, add_special_tokens=False))
+    st.caption(f"Tokens: {token_len}")
 
-        # Metadata
-        with st.expander("🔍 Chunk metadata", expanded=False):
-            st.json(meta)
-
-        st.markdown("---")
-
-
-
-        # ---------- Stage 1: RAG draft (factual) ----------
-    RAG_TEMPLATE_DRAFT = """
-    You are a precise retrieval-augmented assistant.
-
-    Your job is to answer **only** using the text inside <context>. 
-    Do NOT add outside knowledge or assumptions.
-    If the context does not contain enough information, say exactly:
-    "I don’t know from the provided context."
-
-    When multiple pieces of information conflict, summarize each perspective briefly.
-
-    <context>
-    {context}
-    </context>
-
-    Question:
-    {question}
-
-    Write a short, factual draft answer using only this context.
-    Include small in-text citations like [1], [2] referring to chunk numbers if helpful.
-
-    Draft Answer:
-    """.strip()
-
-    prompt_draft = PromptTemplate(template=RAG_TEMPLATE_DRAFT, input_variables=["question", "context"])
-
-    # Build context once and reuse
-    ctx, docs = build_context(ret, q)
-    draft_answer = (prompt_draft | llm | StrOutputParser()).invoke({"question": q, "context": ctx})
-
-    # ---------- Stage 2: Polish (clarity only; no new facts) ----------
-    if polish:
-        POLISH_TEMPLATE = """
-    Rewrite the draft answer for clarity and flow **without adding or changing any facts**.  
-    Use complete sentences and smooth transitions, but keep meaning identical.   
-    Do NOT infer or imagine any new information outside the given context.
-
-    Context (for reference only — do not introduce new facts):
-    {context}
-
-    Draft Answer:
-    {draft}
-
-    Now provide the polished version below:
-
-    Polished Answer:
-    """.strip()
-
-        prompt_polish = PromptTemplate(template=POLISH_TEMPLATE, input_variables=["draft", "context"])
-        polished_answer = (prompt_polish | llm | StrOutputParser()).invoke({"draft": draft_answer, "context": ctx})
-
-        st.subheader("Polished Answer:")
-        st.write(polished_answer)
-
-    else:
-        st.subheader("Final Answer:")
-        st.write(draft_answer)
+    # Metadata
+    with st.expander("🔍 Chunk metadata", expanded=False):
+        st.json(meta)
 
     st.markdown("---")
+
+
+
+    # ---------- Stage 1: RAG draft (factual) ----------
+RAG_TEMPLATE_DRAFT = """
+You are a precise retrieval-augmented assistant.
+
+Your job is to answer **only** using the text inside <context>. 
+Do NOT add outside knowledge or assumptions.
+If the context does not contain enough information, say exactly:
+"I don’t know from the provided context."
+
+When multiple pieces of information conflict, summarize each perspective briefly.
+
+<context>
+{context}
+</context>
+
+Question:
+{question}
+
+Write a short, factual draft answer using only this context.
+Include small in-text citations like [1], [2] referring to chunk numbers if helpful.
+
+Draft Answer:
+""".strip()
+
+prompt_draft = PromptTemplate(template=RAG_TEMPLATE_DRAFT, input_variables=["question", "context"])
+
+# Build context once and reuse
+ctx, docs = build_context(ret, q)
+draft_answer = (prompt_draft | llm | StrOutputParser()).invoke({"question": q, "context": ctx})
+
+# ---------- Stage 2: Polish (clarity only; no new facts) ----------
+if polish:
+    POLISH_TEMPLATE = """
+Rewrite the draft answer for clarity and flow **without adding or changing any facts**.  
+Use complete sentences and smooth transitions, but keep meaning identical.   
+Do NOT infer or imagine any new information outside the given context.
+
+Context (for reference only — do not introduce new facts):
+{context}
+
+Draft Answer:
+{draft}
+
+Now provide the polished version below:
+
+Polished Answer:
+""".strip()
+
+    prompt_polish = PromptTemplate(template=POLISH_TEMPLATE, input_variables=["draft", "context"])
+    polished_answer = (prompt_polish | llm | StrOutputParser()).invoke({"draft": draft_answer, "context": ctx})
+
+    st.subheader("Polished Answer:")
+    st.write(polished_answer)
+
+else:
+    st.subheader("Final Answer:")
+    st.write(draft_answer)
+
+st.markdown("---")
