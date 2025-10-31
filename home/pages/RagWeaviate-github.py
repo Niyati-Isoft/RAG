@@ -224,38 +224,45 @@ def ensure_weaviate_schema(client: weaviate.Client, index_name: str, text_key: s
             pass  # ok if already exists in a race
 
 
+d# >>> replace your load/build wrappers with these <<<
+
 def build_index_weaviate(docs, client, index_name, text_key, embedding):
     if not docs:
         return None
     ensure_weaviate_schema(client, index_name, text_key)
 
-    # upsert with from_documents (this writes the metadata)
+    # Upsert (writes vectors + metadata)
     db = WeaviateVS.from_documents(
         documents=docs,
         embedding=embedding,
         client=client,
         index_name=index_name,
         text_key=text_key,
+        by_text=False,              # 🔴 force nearVector, not nearText
     )
-    # Re-wrap with attributes so retrieval returns metadata
+    # Re-wrap so retrieval returns attributes you actually have
     db = WeaviateVS(
         client=client,
         index_name=index_name,
         text_key=text_key,
         embedding=embedding,
-        attributes=[text_key, *METADATA_KEYS],
+        by_text=False,              # 🔴 force nearVector here too
+        attributes=[text_key, "source", "url", "modality", "page"],  # keep to known-safe fields
     )
     return db
 
+
 def load_index_weaviate(client, index_name, text_key, embedding):
-    # ask for attributes explicitly so Documents have metadata
+    # Ensure schema is up to date even on load
+    ensure_weaviate_schema(client, index_name, text_key)
     try:
         return WeaviateVS(
             client=client,
             index_name=index_name,
             text_key=text_key,
             embedding=embedding,
-            attributes=[text_key, *METADATA_KEYS],
+            by_text=False,          # 🔴 force nearVector
+            attributes=[text_key, "source", "url", "modality", "page"],  # keep minimal
         )
     except Exception:
         return None
