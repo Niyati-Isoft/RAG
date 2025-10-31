@@ -1097,7 +1097,7 @@ if retriever and q:
     # Always use the active retriever (no modality filtering)
     ret = retriever
 
-
+ret = retriever
 # ---------- helpers ----------
 def get_docs(ret, query: str):
     return ret.invoke(query)
