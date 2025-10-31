@@ -168,101 +168,114 @@ import hashlib
 def _stable_id(s: str) -> str:
     return hashlib.md5(s.encode("utf-8", errors="ignore")).hexdigest()
 
+# --- Weaviate helpers: schema + safe attributes + builders ---
+
+def _get_weav_props(client: weaviate.Client, index_name: str) -> set[str]:
+    """Return the set of property names that currently exist on the class."""
+    try:
+        schema = client.schema.get()
+        for c in schema.get("classes", []):
+            if c.get("class") == index_name:
+                return {p["name"] for p in c.get("properties", [])}
+    except Exception:
+        pass
+    return set()
+
 def ensure_weaviate_schema(client: weaviate.Client, index_name: str, text_key: str):
+    """Create class if missing; add missing props, and report what's still missing."""
     schema = client.schema.get()
     classes = {c["class"]: c for c in schema.get("classes", [])}
 
     base_props = [
-        {"name": text_key, "dataType": ["text"]},
-
-        {"name": "doc_id",          "dataType": ["text"]},
-        {"name": "chunk_id",        "dataType": ["text"]},
-        {"name": "source_type",     "dataType": ["text"]},
-        {"name": "source_url",      "dataType": ["text"]},
-        {"name": "file_name",       "dataType": ["text"]},
-        {"name": "embedding_model", "dataType": ["text"]},
-        {"name": "created_at",      "dataType": ["text"]},
-
-        {"name": "source",      "dataType": ["text"]},
-        {"name": "url",         "dataType": ["text"]},
-        {"name": "source_page", "dataType": ["text"]},
-        {"name": "modality",    "dataType": ["text"]},
-        {"name": "sheet",       "dataType": ["text"]},
-
-        {"name": "page",      "dataType": ["int"]},
-        {"name": "slide",     "dataType": ["int"]},
-        {"name": "start_sec", "dataType": ["number"]},
-        {"name": "end_sec",   "dataType": ["number"]},
+        {"name": text_key,         "dataType": ["text"]},
+        {"name": "doc_id",         "dataType": ["text"]},
+        {"name": "chunk_id",       "dataType": ["text"]},
+        {"name": "source_type",    "dataType": ["text"]},
+        {"name": "source_url",     "dataType": ["text"]},
+        {"name": "file_name",      "dataType": ["text"]},
+        {"name": "embedding_model","dataType": ["text"]},
+        {"name": "created_at",     "dataType": ["text"]},
+        {"name": "source",         "dataType": ["text"]},
+        {"name": "url",            "dataType": ["text"]},
+        {"name": "source_page",    "dataType": ["text"]},
+        {"name": "modality",       "dataType": ["text"]},
+        {"name": "sheet",          "dataType": ["text"]},
+        {"name": "page",           "dataType": ["int"]},
+        {"name": "slide",          "dataType": ["int"]},
+        {"name": "start_sec",      "dataType": ["number"]},
+        {"name": "end_sec",        "dataType": ["number"]},
     ]
 
+    # Create class if missing (vectorizer none because we supply embeddings)
     if index_name not in classes:
         client.schema.create_class({
             "class": index_name,
-            "vectorizer": "none",  # using external embeddings
+            "vectorizer": "none",
             "properties": base_props,
         })
         return
 
+    # Add any missing properties
+    existing_props = _get_weav_props(client, index_name)
+    for p in base_props:
+        if p["name"] not in existing_props:
+            try:
+                client.schema.property.create(index_name, p)
+            except Exception as e:
+                # Don't crash; just warn in UI so GraphQL won't request them
+                try:
+                    import streamlit as st
+                    st.warning(f"Weaviate: could not add property '{p['name']}' ({e}).")
+                except Exception:
+                    pass
 
-
-    # class exists → add any missing properties
-    existing_props = {p["name"] for p in classes[index_name].get("properties", [])}
-    # always ensure text_key exists
-    needed = {text_key, *METADATA_KEYS} - existing_props
-    for name in needed:
-        if name in {"page", "slide"}:
-            dtype = ["int"]
-        elif name in {"start_sec", "end_sec"}:
-            dtype = ["number"]
-        elif name == text_key:
-            dtype = ["text"]
-        else:
-            dtype = ["text"]
-        try:
-            client.schema.property.create(index_name, {"name": name, "dataType": dtype})
-        except Exception:
-            pass  # ok if already exists in a race
-
-
-# >>> replace your load/build wrappers with these <<<
+def _safe_attributes(client: weaviate.Client, index_name: str, desired: list[str]) -> list[str]:
+    """Return only attributes that exist in the schema (avoids GraphQL errors)."""
+    existing = _get_weav_props(client, index_name)
+    return [a for a in desired if a in existing]
 
 def build_index_weaviate(docs, client, index_name, text_key, embedding):
     if not docs:
         return None
     ensure_weaviate_schema(client, index_name, text_key)
 
-    # Upsert (writes vectors + metadata)
+    # Upsert (writes vectors + metadata); force nearVector path with by_text=False
     db = WeaviateVS.from_documents(
         documents=docs,
         embedding=embedding,
         client=client,
         index_name=index_name,
         text_key=text_key,
-        by_text=False,              # 🔴 force nearVector, not nearText
+        by_text=False,  # ✅ force nearVector
     )
-    # Re-wrap so retrieval returns attributes you actually have
+
+    # Re-wrap with a safe attribute list (intersect with schema)
+    want_attrs = [text_key, "source", "url", "modality", "page", "slide", "sheet", "start_sec", "end_sec"]
+    attrs = _safe_attributes(client, index_name, want_attrs)
+
     db = WeaviateVS(
         client=client,
         index_name=index_name,
         text_key=text_key,
         embedding=embedding,
-        by_text=False,              # 🔴 force nearVector here too
-        attributes=[text_key, "source", "url", "modality", "page"],  # keep to known-safe fields
+        by_text=False,           # ✅ force nearVector in reads too
+        attributes=attrs,        # ✅ only ask for props that exist
     )
     return db
 
-
 def load_index_weaviate(client, index_name, text_key, embedding):
-    # Ensure schema is up to date even on load
     ensure_weaviate_schema(client, index_name, text_key)
+
+    want_attrs = [text_key, "source", "url", "modality", "page", "slide", "sheet", "start_sec", "end_sec"]
+    attrs = _safe_attributes(client, index_name, want_attrs)
     try:
         return WeaviateVS(
             client=client,
             index_name=index_name,
             text_key=text_key,
             embedding=embedding,
-            by_text=False,          # 🔴 force nearVector
-            attributes=[text_key, "source", "url", "modality", "page"],  # keep minimal
+            by_text=False,     # ✅ force nearVector
+            attributes=attrs,  # ✅ avoid querying missing fields
         )
     except Exception:
         return None
