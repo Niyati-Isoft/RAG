@@ -1238,20 +1238,16 @@ if retriever and q:
     # ---------- Stage 2: Polish (clarity only; no new facts) ----------
     if polish:
         POLISH_TEMPLATE = """
-    Rewrite the draft answer for clarity and flow **without adding or changing any facts**.  
-    Use complete sentences and smooth transitions, but keep meaning identical.   
-    Do NOT infer or imagine any new information outside the given context.
+                You are an expert editor.
+                Paraphrase the following answer to make it more natural, concise, and fluent in English.
+                Do NOT add, remove, or change any facts or meanings.
+                Keep the tone neutral and factual — only rephrase wording and improve sentence flow.
 
-    Context (for reference only — do not introduce new facts):
-    {context}
+                DRAFT ANSWER:
+                {draft}
 
-    Draft Answer:
-    {draft}
-
-    Now provide the polished version below:
-
-    Polished Answer:
-    """.strip()
+                Paraphrased Answer:
+                """.strip()
 
         prompt_polish = PromptTemplate(template=POLISH_TEMPLATE, input_variables=["draft", "context"])
         polished_answer = (prompt_polish | llm | StrOutputParser()).invoke({"draft": draft_answer, "context": ctx})
