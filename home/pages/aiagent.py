@@ -24,6 +24,14 @@ import weaviate
 from langchain_community.vectorstores import Weaviate as WeaviateVS
 from langchain_community.vectorstores import FAISS
 from langchain_community.vectorstores.utils import DistanceStrategy
+# --- Router Agent (HEALTH vs GENERAL) ---
+from routerAgent import build_local_classifier, classify_question
+
+@st.cache_resource(show_spinner=False)
+def get_router():
+    return build_local_classifier("google/flan-t5-base")  # local, free
+
+router = get_router()
 
 # ---- Optional deps that may not exist everywhere ----
 def _optional_import(name, alias=None):
@@ -1152,6 +1160,15 @@ with colb3:
 # ========================= Query / Preview / Answer =========================
 st.header("4) 🔎 Retrieve & 💬 Ask")
 q = st.text_input("Your question", value="High protein meal ideas")
+# ---- Route the query with the router agent ----
+label, debug_info = classify_question(q or "", clf_pipe=router)
+st.caption(f"🧭 Router decision: **{label.upper()}**")
+with st.expander("Router debug", expanded=False):
+    st.json(debug_info)
+
+# Optional manual override
+manual_override = st.checkbox("Override router → Force HEALTH mode", value=False)
+effective_label = "health" if manual_override else label
 
 
 
@@ -1194,56 +1211,45 @@ def build_context(ret, question: str, max_chars: int = 8000):
 
 # ---------- Run retrieval only if retriever and question exist ----------
 if retriever and q:
-    from langchain_community.vectorstores import Weaviate as WeaviateVS  # safe to import here
+    from langchain_community.vectorstores import Weaviate as WeaviateVS
 
-    # UI toggle → metadata filter
-    health_filter = {"topic": "health"} if st.session_state.get("health_mode", True) else {}
+    # Filter only if HEALTH; GENERAL uses all docs
+    health_filter = {"topic": "health"} if effective_label == "health" else {}
 
-    # Build a fresh retriever handle that includes the filter
     db = st.session_state.db
     if isinstance(db, FAISS):
-        # Use your MMR retriever with a metadata filter
         ret = make_retriever(db, k, fetch_k, lambda_mult, filt=health_filter)
     else:
-        # Weaviate path → use plain similarity + filter
         ret = db.as_retriever(
             search_type="similarity",
             search_kwargs={"k": k, "filter": health_filter}
         )
 
-        # --- HOTFIX: make Weaviate retriever use nearVector and only query existing props ---
+        # ---- Weaviate nearVector + safe attrs hotfix ----
         def _force_near_vector_and_safe_attrs(ret_):
             vs = getattr(ret_, "vectorstore", None)
             if not isinstance(vs, WeaviateVS):
                 return
-            try:
-                vs._by_text = False  # Force nearVector
-            except Exception:
-                pass
+            try: vs._by_text = False
+            except: pass
             try:
                 schema = vs._client.schema.get() if hasattr(vs, "_client") else vs.client.schema.get()
-                cls = next(
-                    (c for c in schema.get("classes", [])
-                     if c.get("class") in [getattr(vs, "_index_name", None), getattr(vs, "index_name", None)]),
-                    None
-                )
+                cls = next((c for c in schema.get("classes", [])
+                            if c.get("class") in [getattr(vs, "_index_name", None), getattr(vs, "index_name", None)]), None)
                 existing = {p["name"] for p in (cls.get("properties", []) if cls else [])}
                 attrs = getattr(vs, "_attributes", None) or getattr(vs, "attributes", None)
                 text_key = getattr(vs, "_text_key", None) or getattr(vs, "text_key", None)
                 safe = [a for a in (attrs or []) if (a in existing) or (a == text_key)] or [text_key]
-                if hasattr(vs, "_attributes"):
-                    vs._attributes = safe
-                else:
-                    vs.attributes = safe
-            except Exception:
+                if hasattr(vs, "_attributes"): vs._attributes = safe
+                else: vs.attributes = safe
+            except:
                 text_key = getattr(vs, "_text_key", None) or getattr(vs, "text_key", None)
                 if text_key:
-                    if hasattr(vs, "_attributes"):
-                        vs._attributes = [text_key]
-                    else:
-                        vs.attributes = [text_key]
+                    if hasattr(vs, "_attributes"): vs._attributes = [text_key]
+                    else: vs.attributes = [text_key]
 
         _force_near_vector_and_safe_attrs(ret)
+
 
     # ---------- Stage 0: show preview ----------
     st.subheader("Preview Top-k")
@@ -1284,7 +1290,7 @@ if retriever and q:
 
 
         # ---------- Stage 1: RAG draft (factual) ----------
-    RAG_TEMPLATE_DRAFT = RAG_TEMPLATE_DRAFT = """
+    RAG_TEMPLATE_DRAFT_HEALTH = RAG_TEMPLATE_DRAFT = """
             You are a retrieval-augmented assistant limited to general **health and nutrition education**.
             Stay within this domain. Do NOT provide diagnosis, treatment, or individualized medical advice.
             If the context is insufficient or outside domain, reply exactly:
@@ -1302,7 +1308,29 @@ if retriever and q:
             If the user describes urgent or severe symptoms, include this sentence at the end:
             "This information is educational and not a medical diagnosis. Please seek professional care."
             """.strip()
+    RAG_TEMPLATE_DRAFT_GENERAL = """
+    You are a precise retrieval-augmented assistant.
 
+    Your job is to answer **only** using the text inside <context>. 
+    Do NOT add outside knowledge or assumptions.
+    If the context does not contain enough information, say exactly:
+    "I don’t know from the provided context."
+
+    When multiple pieces of information conflict, summarize each perspective briefly.
+
+    <context>
+    {context}
+    </context>
+
+    Question:
+    {question}
+
+    Write a short, factual draft answer using only this context.
+    Include small in-text citations like [1], [2] referring to chunk numbers if helpful.
+
+    Draft Answer:
+    """.strip()
+    RAG_TEMPLATE_DRAFT = RAG_TEMPLATE_DRAFT_HEALTH if effective_label == "health" else RAG_TEMPLATE_DRAFT_GENERAL
     prompt_draft = PromptTemplate(template=RAG_TEMPLATE_DRAFT, input_variables=["question", "context"])
 
     # Build context once and reuse
@@ -1315,14 +1343,17 @@ if retriever and q:
                 You are an expert editor.
                 Paraphrase the following answer to make it more natural, concise, and fluent in English.
                 Do NOT add, remove, or change any facts or meanings.
-                Keep the tone neutral and factual — only rephrase wording and improve sentence flow.
-                Keep it within general health & nutrition education and avoid medical advice.
+                Keep the tone neutral and factual — only rephrase wording and improve sentence flow.""" + ("""
+                Stay within general health & nutrition education and avoid medical advice.
+            """ if effective_label == "health" else "") + """
+                
 
                 DRAFT ANSWER:
                 {draft}
 
                 Paraphrased Answer:
                 """.strip()
+
 
         prompt_polish = PromptTemplate(template=POLISH_TEMPLATE, input_variables=["draft", "context"])
         polished_answer = (prompt_polish | llm | StrOutputParser()).invoke({"draft": draft_answer, "context": ctx})
