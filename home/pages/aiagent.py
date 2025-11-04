@@ -31,7 +31,6 @@ import sys, os
 ROOT_DIR = os.path.dirname(os.path.dirname(__file__))  # one level up from pages/
 if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
-
 from router_agent import build_local_classifier, classify_question
 
 @st.cache_resource(show_spinner=False)
@@ -1310,8 +1309,8 @@ if retriever and q:
             Question:
             {question}
 
-            Write a short, factual educational draft answer **only** using the context.
-            If appropriate, include brief citations like [1], [2] referring to chunk numbers.
+            Write a short, factual draft answer using only this context.
+            Include small in-text citations like [1], [2] referring to chunk numbers if helpful.
             If the user describes urgent or severe symptoms, include this sentence at the end:
             "This information is educational and not a medical diagnosis. Please seek professional care."
             """.strip()
@@ -1369,7 +1368,7 @@ if retriever and q:
         st.write(polished_answer)
 
     else:
-        st.subheader("Final Answer:")
+        st.subheader("Draft Answer:")
         st.write(draft_answer)
 
     st.markdown("---")
