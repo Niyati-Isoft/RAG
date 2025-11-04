@@ -1298,9 +1298,11 @@ if retriever and q:
         # ---------- Stage 1: RAG draft (factual) ----------
     RAG_TEMPLATE_DRAFT_HEALTH = RAG_TEMPLATE_DRAFT = """
             You are a retrieval-augmented assistant limited to general **health and nutrition education**.
-            Stay within this domain. Do NOT provide diagnosis, treatment, or individualized medical advice.
-            If the context is insufficient or outside domain, reply exactly:
-            "I don’t know from the provided context."
+            Your job is to answer **only** using the text inside <context>. 
+            Do NOT add outside knowledge or assumptions.
+            If the context does not contain enough information, say exactly:
+            "I don’t know from the provided context." Do NOT provide diagnosis, treatment, or individualized medical advice.
+            When multiple pieces of information conflict, summarize each perspective briefly.
 
             <context>
             {context}
@@ -1309,7 +1311,7 @@ if retriever and q:
             Question:
             {question}
 
-            Write a short, factual draft answer using only this context.
+            Write a factual draft answer using only this context.
             Include small in-text citations like [1], [2] referring to chunk numbers if helpful.
             If the user describes urgent or severe symptoms, include this sentence at the end:
             "This information is educational and not a medical diagnosis. Please seek professional care."
@@ -1331,7 +1333,7 @@ if retriever and q:
     Question:
     {question}
 
-    Write a short, factual draft answer using only this context.
+    Write a factual draft answer using only this context.
     Include small in-text citations like [1], [2] referring to chunk numbers if helpful.
 
     Draft Answer:
