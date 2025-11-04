@@ -1348,16 +1348,24 @@ if retriever and q:
     # ---------- Stage 2: Polish (clarity only; no new facts) ----------
     if polish:
         POLISH_TEMPLATE = """
-                            You are an expert editor.
-                            Paraphrase the draft answer to make it more natural, concise, and fluent in English.
-                            Do NOT add, remove, or change any facts or meanings.
-                            Keep the tone neutral and factual — only rephrase wording and improve sentence flow.
+                            You are an expert editor and fact-checker.
+
+                            Your goal is to improve clarity, readability, and flow of the draft answer **without changing or adding any facts** beyond what is in the given <context>.
+                            Keep the tone neutral and factual — just rephrase for better English fluency and structure.
+
+                            <context>
+                            {context}
+                            </context>
 
                             DRAFT ANSWER:
                             {draft}
 
+                            Now rewrite the draft in smoother, more natural English — 
+                            but ensure it stays fully consistent with the context and preserves all factual details.
+
                             Paraphrased Answer:
                             """.strip()
+
 
         prompt_polish = PromptTemplate(template=POLISH_TEMPLATE, input_variables=["draft", "context"])
         polished_answer = (prompt_polish | llm | StrOutputParser()).invoke({"draft": draft_answer, "context": ctx})
