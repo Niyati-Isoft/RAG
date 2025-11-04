@@ -1325,6 +1325,7 @@ if retriever and q:
     If the context does not contain enough information, say exactly:
     "I don’t know from the provided context."
 
+    When multiple pieces of information conflict, summarize each perspective briefly.
 
     <context>
     {context}
@@ -1333,7 +1334,7 @@ if retriever and q:
     Question:
     {question}
 
-    Write a factual draft answer using only this context.
+    Write a short, factual draft answer using only this context.
     Include small in-text citations like [1], [2] referring to chunk numbers if helpful.
 
     Draft Answer:
