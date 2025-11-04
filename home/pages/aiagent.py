@@ -25,7 +25,7 @@ from langchain_community.vectorstores import Weaviate as WeaviateVS
 from langchain_community.vectorstores import FAISS
 from langchain_community.vectorstores.utils import DistanceStrategy
 # --- Router Agent (HEALTH vs GENERAL) ---
-from routerAgent import build_local_classifier, classify_question
+from __routerAgent import build_local_classifier, classify_question
 
 @st.cache_resource(show_spinner=False)
 def get_router():
