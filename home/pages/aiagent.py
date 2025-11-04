@@ -1297,7 +1297,7 @@ if retriever and q:
 
 
         # ---------- Stage 1: RAG draft (factual) ----------
-    RAG_TEMPLATE_DRAFT_HEALTH = RAG_TEMPLATE_DRAFT = """
+    RAG_TEMPLATE_DRAFT_HEALTH ="""
             You are a retrieval-augmented assistant limited to general **health and nutrition education**.
             Your job is to answer **only** using the text inside <context>. 
             Do NOT add outside knowledge or assumptions.
