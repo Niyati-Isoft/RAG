@@ -25,6 +25,13 @@ from langchain_community.vectorstores import Weaviate as WeaviateVS
 from langchain_community.vectorstores import FAISS
 from langchain_community.vectorstores.utils import DistanceStrategy
 # --- Router Agent (HEALTH vs GENERAL) ---
+import sys, os
+
+# Ensure Streamlit can find the root directory (where routerAgent.py lives)
+ROOT_DIR = os.path.dirname(os.path.dirname(__file__))  # one level up from pages/
+if ROOT_DIR not in sys.path:
+    sys.path.insert(0, ROOT_DIR)
+
 from router_agent import build_local_classifier, classify_question
 
 @st.cache_resource(show_spinner=False)
