@@ -27,3 +27,8 @@ beautifulsoup4
 trafilatura
 moviepy
 pytesseract
+
+
+## new requirements:
+tldextract
+
