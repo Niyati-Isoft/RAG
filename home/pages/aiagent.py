@@ -151,7 +151,8 @@ def get_tokenizer_and_llm(model_name: str):
         model=model,
         tokenizer=tok,
         max_new_tokens=384,
-        temperature=0.6,
+        temperature=0.4,
+        num_beams=3,
         repetition_penalty=1.05,
         device=0 if torch.cuda.is_available() else -1,
     )
@@ -1302,7 +1303,7 @@ if retriever and q:
             Do NOT add outside knowledge or assumptions.
             If the context does not contain enough information, say exactly:
             "I don’t know from the provided context." Do NOT provide diagnosis, treatment, or individualized medical advice.
-            When multiple pieces of information conflict, summarize each perspective briefly.
+            
 
             <context>
             {context}
@@ -1324,7 +1325,6 @@ if retriever and q:
     If the context does not contain enough information, say exactly:
     "I don’t know from the provided context."
 
-    When multiple pieces of information conflict, summarize each perspective briefly.
 
     <context>
     {context}
