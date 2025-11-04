@@ -1347,20 +1347,14 @@ if retriever and q:
 
     # ---------- Stage 2: Polish (clarity only; no new facts) ----------
     if polish:
-        POLISH_TEMPLATE = """
-                You are an expert editor.
-                Paraphrase the following answer to make it more natural, concise, and fluent in English.
-                Do NOT add, remove, or change any facts or meanings.
-                Keep the tone neutral and factual — only rephrase wording and improve sentence flow.""" + ("""
-                Stay within general health & nutrition education and avoid medical advice.
-            """ if effective_label == "health" else "") + """
-                
-
-                DRAFT ANSWER:
-                {draft}
-
-                Paraphrased Answer:
-                """.strip()
+        POLISH_TEMPLATE = (
+                            "You are an expert editor.\n"
+                            "Rewrite the DRAFT to improve clarity and flow **without dropping any facts**.\n"
+                            "Keep the **same structure** (bullets stay bullets) and keep total length within **±10%** of the draft.\n"
+                            "Do NOT add new information or change meaning." +
+                            ("\nAvoid medical advice; keep it general health & nutrition education." if effective_label == "health" else "") +
+                            "\n\nDRAFT:\n{draft}\n\nPolished (same structure & length):\n"
+                        ).strip().strip()
 
 
         prompt_polish = PromptTemplate(template=POLISH_TEMPLATE, input_variables=["draft", "context"])
