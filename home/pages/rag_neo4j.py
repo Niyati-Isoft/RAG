@@ -137,16 +137,29 @@ def kg_stats(driver) -> dict:
         rec = s.run(q).single()
     return dict(rec) if rec else {}
 
+import functools
+
 @st.cache_data(ttl=120, show_spinner=False)
-def kg_context_for_question(driver, question: str, max_edges: int = 80) -> str:
-    """
-    Uses your existing entity extractor + graph_context builder.
-    Only reads; no writes. Cached briefly to avoid repeat queries.
-    """
-    if not driver or not question.strip():
+def kg_context_for_question(_driver, question: str, max_edges: int = 80) -> str:
+    # `_driver` is intentionally unused in the cache key; just use it inside.
+    if not _driver or not question.strip():
         return ""
-    ents = kg_query_entities(question)          # from graph_retrieve.py
-    return get_graph_context(driver, ents, max_edges=max_edges)  # returns text block
+    ents = kg_query_entities(question)
+    return get_graph_context(_driver, ents, max_edges)
+
+@st.cache_data(ttl=600, show_spinner=False)
+def kg_stats(_driver) -> dict:
+    if not _driver: 
+        return {}
+    q = """
+    CALL { MATCH (e:Entity) RETURN count(e) AS entities }
+    CALL { MATCH ()-[r]->() RETURN count(r) AS rels }
+    CALL { MATCH (c:Chunk)  RETURN count(c) AS chunks }
+    RETURN entities, rels, chunks
+    """
+    with _driver.session() as s:
+        rec = s.run(q).single()
+    return dict(rec) if rec else {}
 
 
 @st.cache_resource(show_spinner=False)
@@ -1620,6 +1633,7 @@ if retriever and q:
             graph_ctx = kg_context_for_question(neo_driver, q, max_edges=KG_MAX_EDGES)
         except Exception as e:
             st.warning(f"KG retrieval skipped: {e}")
+
 
 
     # ---------- Fuse ----------
