@@ -2,9 +2,20 @@
 import re
 from typing import List, Tuple
 import spacy
-nlp = spacy.load("en_core_web_sm")  # make sure model is installed
+# kg_extract.py
+import re
+from typing import List, Tuple
+import spacy
+
+try:
+    import en_core_web_sm  # installed via requirements.txt
+    nlp = en_core_web_sm.load()
+except Exception:
+    # fallback if only the name is available
+    nlp = spacy.load("en_core_web_sm")
 
 Triplet = Tuple[str, str, str]
+
 
 REL_PATTERNS = [
     (re.compile(r"\b(?P<h>[\w\- ]+?)\s+(?:contains|is\s+rich\s+in|has)\s+(?P<t>[\w\- ]+)\b", re.I), "CONTAINS"),
