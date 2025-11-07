@@ -1333,7 +1333,38 @@ with c2:
         else:
             st.warning("Weaviate not configured.")
 
+# ========================= KG: Push triples (robust) =========================
+
 colkg1, colkg2 = st.columns(2)
+
+def _safe_chunk_id(meta: dict, fallback_seq: int) -> str:
+    """
+    Build a deterministic, non-null chunk_id for Neo4j.
+    Priority: metadata.chunk_id → doc_id → stable(source/url) + seq
+    """
+    cid = (meta.get("chunk_id") or "").strip()
+    if cid:
+        return cid
+
+    # fallbacks
+    doc_id = (meta.get("doc_id") or "").strip()
+    if not doc_id:
+        # derive a doc id from source/url
+        anchor = meta.get("url") or meta.get("source") or meta.get("source_url") or "unknown"
+        doc_id = _stable_id(str(anchor))
+    return f"{doc_id}:{fallback_seq:04d}"
+
+def _safe_source(meta: dict) -> str | None:
+    return meta.get("source") or meta.get("source_url") or meta.get("url")
+
+def _safe_write_batch(driver, triples, mentions, meta):
+    """
+    Guard against missing keys that kg_store.write_batch expects.
+    """
+    safe_meta = dict(meta or {})
+    safe_meta["types"] = safe_meta.get("types") or {}      # <- avoid KeyError 'types'
+    safe_meta["chunk_id"] = safe_meta.get("chunk_id") or "UNKNOWN:0000"
+    return neo_write_batch(driver, triples, mentions, safe_meta)
 
 with colkg1:
     if st.button("➡️ Push current docs to KG (Neo4j)"):
@@ -1341,38 +1372,61 @@ with colkg1:
             st.error("KG disabled.")
         elif not neo_driver:
             st.error("Neo4j not configured or connection failed (see status above).")
-
         else:
-            all_docs = st.session_state.get("all_docs_nonweb", []) + st.session_state.get("web_docs", [])
+            all_docs = (st.session_state.get("all_docs_nonweb", []) or []) + \
+                       (st.session_state.get("web_docs", []) or [])
+
             if not all_docs:
-                st.warning("No documents loaded yet.")
+                st.warning("No documents loaded yet. Load from FAISS/Weaviate first (buttons above).")
             else:
-                # Build once and write in batches per document to preserve evidence
                 pushed_edges = 0
-                for d in all_docs:
-                    text = d.page_content or ""
-                    meta = d.metadata or {}
-                    triples, mentions, types = docs_to_triples_and_mentions([d])
+                skipped = 0
+
+                for i, d in enumerate(all_docs, 1):
+                    text = (getattr(d, "page_content", "") or "").strip()
+                    meta = dict(getattr(d, "metadata", {}) or {})
+
+                    # Build safe identifiers
+                    meta["chunk_id"] = _safe_chunk_id(meta, i)
+                    meta["source"]   = _safe_source(meta)
+
+                    # Build triples/mentions/types from this single doc
+                    try:
+                        triples, mentions, types_map = docs_to_triples_and_mentions([d])
+                    except Exception as e:
+                        st.warning(f"KG parse failed for chunk {meta.get('chunk_id')}: {e}")
+                        skipped += 1
+                        continue
+
+                    # Skip empty chunks (no text and no triples)
+                    if not text and not triples:
+                        skipped += 1
+                        continue
 
                     meta_pack = {
-                        "source": meta.get("source") or meta.get("source_url") or meta.get("url"),
-                        "url": meta.get("url"),
-                        "page": meta.get("page"),
-                        "slide": meta.get("slide"),
-                        "chunk_id": meta.get("chunk_id") or f"{meta.get('doc_id','?')}:{meta.get('page') or meta.get('slide') or '?'}",
-                        "text": text,
-                        "types": types,
-                        "conf": 0.7
+                        "chunk_id": meta["chunk_id"],     # <- ensure non-null
+                        "source":   meta.get("source"),
+                        "url":      meta.get("url"),
+                        "page":     meta.get("page"),
+                        "slide":    meta.get("slide"),
+                        "text":     text,
+                        "types":    types_map or {},      # <- ensure dict
+                        "conf":     0.7,
                     }
-                    try:
-                        neo_write_batch(neo_driver, triples, mentions, types)
 
-                        pushed_edges += len(triples)
+                    try:
+                        # Use the guarded writer so missing keys don't explode
+                        _safe_write_batch(neo_driver, triples or [], mentions or [], meta_pack)
+                        pushed_edges += len(triples or [])
                     except Exception as e:
                         st.warning(f"KG write failed for chunk {meta_pack.get('chunk_id')}: {e}")
-                st.success(f"KG upsert complete. Triples inserted/merged: ~{pushed_edges}")
+                        skipped += 1
+
+                st.success(f"KG upsert complete. Triples written: ~{pushed_edges}. Skipped: {skipped}.")
+
 with colkg2:
-    st.caption("Tip: run this after each ingestion to keep the KG updated. Edges store evidence chunk ids & sources.")
+    st.caption("Tip: if app was reloaded, click the 'Load docs from FAISS/Weaviate' buttons above, then push.")
+
 
 # ========================= Query / Preview / Answer =========================
 st.header("4) 🔎 Retrieve & 💬 Ask")
