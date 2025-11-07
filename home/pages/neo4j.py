@@ -27,13 +27,12 @@ from langchain_community.vectorstores.utils import DistanceStrategy
 # --- Router Agent (HEALTH vs GENERAL) ---
 import sys, os
 
-import os, sys
-HERE = os.path.dirname(__file__)
+# --- make this folder (and its parent) importable ---
+HERE = os.path.dirname(os.path.abspath(__file__))   # absolute
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
 
-# if you also import modules stored one level up, keep your existing ROOT_DIR logic too:
-ROOT_DIR = os.path.dirname(os.path.dirname(__file__))
+ROOT_DIR = os.path.dirname(HERE)
 if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
 
