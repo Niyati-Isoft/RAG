@@ -41,62 +41,68 @@ from graph_retrieve import get_driver as get_neo_driver_rt, query_entities as kg
 ###check
 
 # ---------- Neo4j config & connection (robust) ----------
-import os, streamlit as st
 from typing import Tuple, Optional
+from neo4j import GraphDatabase
+
+def _get(container, key, default=""):
+    try:
+        return container.get(key, default)
+    except Exception:
+        try:
+            return container[key]
+        except Exception:
+            return default
 
 def _read_neo_secrets() -> Tuple[str, str, str]:
     s = getattr(st, "secrets", {})
-    sec = s.get("Neo4j", {}) if isinstance(s, dict) else {}
-    uri = (sec.get("NEO4J_URI")
-           or s.get("NEO4J_URI", "")
-           or os.getenv("NEO4J_URI", ""))
-    user = (sec.get("NEO4J_USER")
-            or sec.get("NEO4J_USERNAME")
-            or s.get("NEO4J_USER", "")
-            or s.get("NEO4J_USERNAME", "")
-            or os.getenv("NEO4J_USER", os.getenv("NEO4J_USERNAME", "")))
-    pwd = (sec.get("NEO4J_PASSWORD")
-           or s.get("NEO4J_PASSWORD", "")
-           or os.getenv("NEO4J_PASSWORD", ""))
+    sec = _get(s, "Neo4j", {})  # support both top-level & [Neo4j] section
+
+    uri  = _get(sec, "NEO4J_URI",  _get(s, "NEO4J_URI",  os.getenv("NEO4J_URI", "")))
+    user = _get(sec, "NEO4J_USER",
+           _get(sec, "NEO4J_USERNAME",
+           _get(s,  "NEO4J_USER",
+           _get(s,  "NEO4J_USERNAME", os.getenv("NEO4J_USER", os.getenv("NEO4J_USERNAME",""))))))
+    pwd  = _get(sec, "NEO4J_PASSWORD", _get(s, "NEO4J_PASSWORD", os.getenv("NEO4J_PASSWORD","")))
     return uri, user, pwd
 
-from neo4j import GraphDatabase
-
 @st.cache_resource(show_spinner=False)
-def get_neo_driver(uri: str, user: str, pwd: str):
+def _neo_driver(uri: str, user: str, pwd: str):
     if not (uri and user and pwd):
         return None
-    # Aura requires neo4j+s (TLS)
     if not uri.startswith("neo4j+s://"):
         st.warning("Neo4j URI should start with 'neo4j+s://'.")
-    drv = GraphDatabase.driver(uri, auth=(user, pwd))
-    # health check
-    with drv.session() as s:
-        _ = s.run("RETURN 1 AS ok").single()
-    return drv
+    # use your kg_store wrapper (handles Aura TLS) if you prefer:
+    try:
+        return get_neo_driver(uri=uri, user=user, password=pwd)
+    except Exception:
+        # fallback to direct driver (optional)
+        drv = GraphDatabase.driver(uri, auth=(user, pwd))
+        with drv.session() as s:
+            s.run("RETURN 1").single()
+        return drv
 
-KG_ENABLED = True  # you already have this
+KG_ENABLED = True  # you keep this true
 
 NEO_URI, NEO_USER, NEO_PWD = _read_neo_secrets()
-neo_driver = None
+neo_driver: Optional[object] = None
 neo_error: Optional[str] = None
 if KG_ENABLED:
     try:
-        neo_driver = get_neo_driver(NEO_URI, NEO_USER, NEO_PWD)
+        neo_driver = _neo_driver(NEO_URI, NEO_USER, NEO_PWD)
     except Exception as e:
         neo_error = str(e)
         neo_driver = None
 
-# Small status panel (helps debug in UI)
 with st.expander("Neo4j connection status", expanded=False):
-    st.write({"uri": NEO_URI or "(missing)", "user": NEO_USER or "(missing)",
-              "has_password": bool(NEO_PWD)})
+    st.write({"uri": bool(NEO_URI), "user": bool(NEO_USER), "has_password": bool(NEO_PWD)})
     if neo_driver:
         st.success("✅ Connected to Neo4j.")
     else:
         st.error("❌ Neo4j not connected.")
         if neo_error:
             st.code(neo_error, language="text")
+
+
 
 ###
 @st.cache_resource(show_spinner=False)
@@ -180,12 +186,6 @@ with st.sidebar:
     st.markdown("---")
     st.caption("If OCR/A/V isn’t working, install: tesseract-ocr & ffmpeg on your machine.")
 
-    st.markdown("**Knowledge Graph (Neo4j Aura)**")
-    KG_ENABLED = st.checkbox("Enable KG (graph-augmented RAG)", value=True)
-    NEO_URI  = st.secrets.get("NEO4J_URI", "")
-    NEO_USER = st.secrets.get("NEO4J_USER", "")
-    NEO_PWD  = st.secrets.get("NEO4J_PASSWORD", "")
-    KG_MAX_EDGES = st.slider("KG edges limit (retrieval)", 10, 200, 60, 10)
 
 
 METADATA_KEYS = [
@@ -252,18 +252,7 @@ def get_weaviate_client(url: str, api_key: str):
         return None
     auth = weaviate.AuthApiKey(api_key=api_key) if api_key else None
     return weaviate.Client(url=url, auth_client_secret=auth)  # v3 REST client
-# ========================= Neo4j KG Driver =========================
-@st.cache_resource(show_spinner=False)
-def get_neo4j_driver(uri, user, pwd):
-    if not (uri and user and pwd):
-        return None
-    try:
-        return get_neo_driver(uri=uri, user=user, password=pwd)
-    except Exception as e:
-        st.warning(f"Neo4j not connected: {e}")
-        return None
 
-neo_driver = get_neo4j_driver(NEO_URI, NEO_USER, NEO_PWD) if KG_ENABLED else None
 
 import hashlib
 
@@ -1313,7 +1302,8 @@ with colkg1:
                         "conf": 0.7
                     }
                     try:
-                        neo_write_batch(neo_driver, triples, mentions, meta_pack)
+                        neo_write_batch(neo_driver, triples, mentions, types)
+
                         pushed_edges += len(triples)
                     except Exception as e:
                         st.warning(f"KG write failed for chunk {meta_pack.get('chunk_id')}: {e}")
