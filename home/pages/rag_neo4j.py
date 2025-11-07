@@ -160,6 +160,49 @@ def kg_stats(_driver) -> dict:
     with _driver.session() as s:
         rec = s.run(q).single()
     return dict(rec) if rec else {}
+from pyvis.network import Network
+import tempfile
+import streamlit.components.v1 as components
+
+def show_graph_for_question(driver, question: str, max_edges: int = 80):
+    """Retrieve a small subgraph from Neo4j and render it interactively."""
+    if not driver or not question.strip():
+        st.warning("No question or Neo4j driver.")
+        return
+
+    ents = kg_query_entities(question)
+    if not ents:
+        st.info("No entities found for this question.")
+        return
+
+    q = """
+    MATCH (e:Entity) WHERE e.name IN $ents
+    MATCH p=(e)-[r*1..2]-(n:Entity)
+    WITH p, r LIMIT $max
+    UNWIND r AS rel
+    WITH DISTINCT startNode(rel) AS s, rel, endNode(rel) AS t
+    RETURN s.name AS source, type(rel) AS rel_type, t.name AS target
+    """
+    with driver.session() as s:
+        data = s.run(q, ents=ents, max=max_edges).data()
+
+    if not data:
+        st.info("No relationships found for these entities.")
+        return
+
+    net = Network(height="500px", width="100%", bgcolor="#FFFFFF", font_color="#333333", notebook=False)
+    net.barnes_hut()  # nice layout
+
+    for row in data:
+        src, rel, tgt = row["source"], row["rel_type"], row["target"]
+        net.add_node(src, label=src, color="#4CAF50")
+        net.add_node(tgt, label=tgt, color="#2196F3")
+        net.add_edge(src, tgt, label=rel, color="#999999")
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".html") as tmp:
+        net.show(tmp.name)
+        html = open(tmp.name, "r", encoding="utf-8").read()
+        components.html(html, height=550, scrolling=True)
 
 
 @st.cache_resource(show_spinner=False)
@@ -1703,3 +1746,8 @@ if retriever and q:
         st.write(draft_answer)
 
     st.markdown("---")
+    
+if KG_ENABLED and neo_driver and q.strip():
+    with st.expander("📊 View KG subgraph for this question", expanded=False):
+        if st.button("Show graph view"):
+            show_graph_for_question(neo_driver, q, max_edges=KG_MAX_EDGES)
