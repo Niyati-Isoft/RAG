@@ -1276,7 +1276,63 @@ with colb3:
         else:
             st.info("For Weaviate, delete objects via Weaviate console/admin script (not from the app).")
 # ========================= KG: Push triples =========================
+
+# ========================= Helper: Load docs from existing index for KG =========================
+from langchain_core.documents import Document
+
+# ---- For Weaviate ----
+def fetch_docs_from_weaviate(client, index_name, text_key, limit=500):
+    """Pull up to 'limit' documents with text+metadata from Weaviate."""
+    if client is None:
+        return []
+    props = [text_key, "source", "url", "page", "slide", "sheet",
+             "start_sec", "end_sec", "topic", "source_domain"]
+    res = (client.query
+           .get(index_name, props)
+           .with_limit(limit)
+           .do())
+    items = (res or {}).get("data", {}).get("Get", {}).get(index_name, []) or []
+    docs = []
+    for obj in items:
+        text = obj.get(text_key, "") or ""
+        meta = {k: v for k, v in obj.items() if k != text_key}
+        if text.strip():
+            docs.append(Document(page_content=text, metadata=meta))
+    return docs
+
+
+# ---- For FAISS ----
+def faiss_docs_from_store(db):
+    """Extract stored Documents directly from FAISS local docstore."""
+    try:
+        return list(getattr(db, "docstore")._dict.values())
+    except Exception:
+        return []
+
 st.header("3½) 🕸️ Knowledge Graph (optional)")
+# ------------------- Load docs for KG (optional helper) -------------------
+st.markdown("#### Load existing docs if you reloaded the app")
+
+c1, c2 = st.columns(2)
+with c1:
+    if st.button("📥 Load docs from FAISS index"):
+        db = st.session_state.get("db")
+        if db:
+            docs = faiss_docs_from_store(db)
+            st.session_state.all_docs_nonweb = docs
+            st.success(f"Loaded {len(docs)} docs from FAISS. Now push to KG.")
+        else:
+            st.warning("No FAISS index loaded yet.")
+
+with c2:
+    if st.button("🌐 Load docs from Weaviate"):
+        if weav_client:
+            docs = fetch_docs_from_weaviate(weav_client, WEAV_INDEX, WEAV_TEXT_KEY, limit=800)
+            st.session_state.web_docs = docs
+            st.success(f"Loaded {len(docs)} docs from Weaviate. Now push to KG.")
+        else:
+            st.warning("Weaviate not configured.")
+
 colkg1, colkg2 = st.columns(2)
 
 with colkg1:
