@@ -38,7 +38,67 @@ from kg_canon import Canon, coarse_type
 from kg_store import get_driver as get_neo_driver, write_batch as neo_write_batch
 from graph_retrieve import get_driver as get_neo_driver_rt, query_entities as kg_query_entities, get_graph_context
 
+###check
 
+# ---------- Neo4j config & connection (robust) ----------
+import os, streamlit as st
+from typing import Tuple, Optional
+
+def _read_neo_secrets() -> Tuple[str, str, str]:
+    s = getattr(st, "secrets", {})
+    sec = s.get("Neo4j", {}) if isinstance(s, dict) else {}
+    uri = (sec.get("NEO4J_URI")
+           or s.get("NEO4J_URI", "")
+           or os.getenv("NEO4J_URI", ""))
+    user = (sec.get("NEO4J_USER")
+            or sec.get("NEO4J_USERNAME")
+            or s.get("NEO4J_USER", "")
+            or s.get("NEO4J_USERNAME", "")
+            or os.getenv("NEO4J_USER", os.getenv("NEO4J_USERNAME", "")))
+    pwd = (sec.get("NEO4J_PASSWORD")
+           or s.get("NEO4J_PASSWORD", "")
+           or os.getenv("NEO4J_PASSWORD", ""))
+    return uri, user, pwd
+
+from neo4j import GraphDatabase
+
+@st.cache_resource(show_spinner=False)
+def get_neo_driver(uri: str, user: str, pwd: str):
+    if not (uri and user and pwd):
+        return None
+    # Aura requires neo4j+s (TLS)
+    if not uri.startswith("neo4j+s://"):
+        st.warning("Neo4j URI should start with 'neo4j+s://'.")
+    drv = GraphDatabase.driver(uri, auth=(user, pwd))
+    # health check
+    with drv.session() as s:
+        _ = s.run("RETURN 1 AS ok").single()
+    return drv
+
+KG_ENABLED = True  # you already have this
+
+NEO_URI, NEO_USER, NEO_PWD = _read_neo_secrets()
+neo_driver = None
+neo_error: Optional[str] = None
+if KG_ENABLED:
+    try:
+        neo_driver = get_neo_driver(NEO_URI, NEO_USER, NEO_PWD)
+    except Exception as e:
+        neo_error = str(e)
+        neo_driver = None
+
+# Small status panel (helps debug in UI)
+with st.expander("Neo4j connection status", expanded=False):
+    st.write({"uri": NEO_URI or "(missing)", "user": NEO_USER or "(missing)",
+              "has_password": bool(NEO_PWD)})
+    if neo_driver:
+        st.success("✅ Connected to Neo4j.")
+    else:
+        st.error("❌ Neo4j not connected.")
+        if neo_error:
+            st.code(neo_error, language="text")
+
+###
 @st.cache_resource(show_spinner=False)
 def get_router():
     return build_local_classifier("google/flan-t5-base")  # local, free
