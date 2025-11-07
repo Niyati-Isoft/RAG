@@ -81,6 +81,9 @@ def _neo_driver(uri: str, user: str, pwd: str):
             s.run("RETURN 1").single()
         return drv
 
+
+neo_driver = get_neo4j_driver_cached(NEO_URI, NEO_USER, NEO_PWD) if KG_ENABLED else None
+
 KG_ENABLED = True  # you keep this true
 
 NEO_URI, NEO_USER, NEO_PWD = _read_neo_secrets()
@@ -105,6 +108,49 @@ with st.expander("Neo4j connection status", expanded=False):
 
 
 ###
+
+# ── KG connection (persists across reruns) ─────────────────────────────────────
+@st.cache_resource(show_spinner=False)
+def get_neo4j_driver_cached(uri, user, pwd):
+    if not (uri and user and pwd):
+        return None
+    return get_neo_driver(uri=uri, user=user, password=pwd)
+
+
+# ── Reusable KG readers ────────────────────────────────────────────────────────
+@st.cache_data(ttl=600, show_spinner=False)
+def kg_stats(driver) -> dict:
+    """Lightweight snapshot so you know the KG is there."""
+    if not driver: 
+        return {}
+    q = """
+    CALL {
+      MATCH (e:Entity) RETURN count(e) AS entities
+    }
+    CALL {
+      MATCH ()-[r]->() RETURN count(r) AS rels
+    }
+    CALL {
+      MATCH (c:Chunk) RETURN count(c) AS chunks
+    }
+    RETURN entities, rels, chunks
+    """
+    with driver.session() as s:
+        rec = s.run(q).single()
+    return dict(rec) if rec else {}
+
+@st.cache_data(ttl=120, show_spinner=False)
+def kg_context_for_question(driver, question: str, max_edges: int = 80) -> str:
+    """
+    Uses your existing entity extractor + graph_context builder.
+    Only reads; no writes. Cached briefly to avoid repeat queries.
+    """
+    if not driver or not question.strip():
+        return ""
+    ents = kg_query_entities(question)          # from graph_retrieve.py
+    return get_graph_context(driver, ents, max_edges=max_edges)  # returns text block
+
+
 @st.cache_resource(show_spinner=False)
 def get_router():
     return build_local_classifier("google/flan-t5-base")  # local, free
@@ -1427,6 +1473,9 @@ with colkg1:
 with colkg2:
     st.caption("Tip: if app was reloaded, click the 'Load docs from FAISS/Weaviate' buttons above, then push.")
 
+if st.button("🔁 Refresh KG cache"):
+    kg_context_for_question.clear()   # clears cache_data for that function
+    st.success("KG cache cleared.")
 
 # ========================= Query / Preview / Answer =========================
 st.header("4) 🔎 Retrieve & 💬 Ask")
@@ -1567,13 +1616,10 @@ if retriever and q:
     # ---------- Build vector context (existing) ----------
     ctx, docs = build_context(ret, q)
 
-    # ---------- KG retrieval (NEW) ----------
     graph_ctx = ""
     if KG_ENABLED and neo_driver:
         try:
-            ents = kg_query_entities(q)
-            max_edges = int(st.session_state.get("KG_MAX_EDGES", 60))  # <- fallback default
-            graph_ctx = get_graph_context(neo_driver, ents, max_edges=max_edges)
+            graph_ctx = kg_context_for_question(neo_driver, q, max_edges=KG_MAX_EDGES)
         except Exception as e:
             st.warning(f"KG retrieval skipped: {e}")
 
