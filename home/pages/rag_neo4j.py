@@ -185,7 +185,14 @@ with st.sidebar:
 
     st.markdown("---")
     st.caption("If OCR/A/V isn’t working, install: tesseract-ocr & ffmpeg on your machine.")
-
+    
+    #kg helpers
+    KG_ENABLED = st.checkbox("Enable KG (graph-augmented RAG)", value=True)
+    NEO_URI  = st.secrets.get("NEO4J_URI", "")
+    NEO_USER = st.secrets.get("NEO4J_USER", "")
+    NEO_PWD  = st.secrets.get("NEO4J_PASSWORD", "")
+    KG_MAX_EDGES = st.slider("KG edges limit (retrieval)", 10, 200, 60, 10)
+    st.session_state["KG_MAX_EDGES"] = KG_MAX_EDGES
 
 
 METADATA_KEYS = [
