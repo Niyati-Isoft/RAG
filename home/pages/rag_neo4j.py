@@ -1152,7 +1152,7 @@ if existing_files:
         except Exception:
             df_stats.append({"file": Path(p).name, "ext": Path(p).suffix.lower(),
                              "size_kb": None})
-    st.dataframe(pd.DataFrame(df_stats), use_container_width=True)
+    st.dataframe(pd.DataFrame(df_stats), width="stretch")
 
 # ========================= Ingestion Actions =========================
 
