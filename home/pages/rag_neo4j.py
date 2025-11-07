@@ -1462,9 +1462,11 @@ if retriever and q:
     if KG_ENABLED and neo_driver:
         try:
             ents = kg_query_entities(q)
-            graph_ctx = get_graph_context(neo_driver, ents, max_edges=KG_MAX_EDGES)
+            max_edges = int(st.session_state.get("KG_MAX_EDGES", 60))  # <- fallback default
+            graph_ctx = get_graph_context(neo_driver, ents, max_edges=max_edges)
         except Exception as e:
             st.warning(f"KG retrieval skipped: {e}")
+
 
     # ---------- Fuse ----------
     fusion_ctx = ("GRAPH FACTS:\n" + (graph_ctx or "(none)")) + ("\n\nVECTOR CONTEXT:\n" + (ctx or "(none)"))
