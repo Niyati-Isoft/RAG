@@ -1285,8 +1285,11 @@ colkg1, colkg2 = st.columns(2)
 
 with colkg1:
     if st.button("➡️ Push current docs to KG (Neo4j)"):
-        if not KG_ENABLED or not neo_driver:
-            st.error("KG disabled or Neo4j not configured.")
+        if not KG_ENABLED:
+            st.error("KG disabled.")
+        elif not neo_driver:
+            st.error("Neo4j not configured or connection failed (see status above).")
+
         else:
             all_docs = st.session_state.get("all_docs_nonweb", []) + st.session_state.get("web_docs", [])
             if not all_docs:
