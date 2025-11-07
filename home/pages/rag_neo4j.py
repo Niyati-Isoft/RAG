@@ -81,10 +81,8 @@ def _neo_driver(uri: str, user: str, pwd: str):
             s.run("RETURN 1").single()
         return drv
 
-
-neo_driver = get_neo4j_driver_cached(NEO_URI, NEO_USER, NEO_PWD) if KG_ENABLED else None
-
 KG_ENABLED = True  # you keep this true
+
 
 NEO_URI, NEO_USER, NEO_PWD = _read_neo_secrets()
 neo_driver: Optional[object] = None
