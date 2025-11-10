@@ -107,35 +107,10 @@ with st.expander("Neo4j connection status", expanded=False):
 
 ###
 
-# ── KG connection (persists across reruns) ─────────────────────────────────────
-@st.cache_resource(show_spinner=False)
-def get_neo4j_driver_cached(uri, user, pwd):
-    if not (uri and user and pwd):
-        return None
-    return get_neo_driver(uri=uri, user=user, password=pwd)
+
 
 
 # ── Reusable KG readers ────────────────────────────────────────────────────────
-@st.cache_data(ttl=600, show_spinner=False)
-def kg_stats(driver) -> dict:
-    """Lightweight snapshot so you know the KG is there."""
-    if not driver: 
-        return {}
-    q = """
-    CALL {
-      MATCH (e:Entity) RETURN count(e) AS entities
-    }
-    CALL {
-      MATCH ()-[r]->() RETURN count(r) AS rels
-    }
-    CALL {
-      MATCH (c:Chunk) RETURN count(c) AS chunks
-    }
-    RETURN entities, rels, chunks
-    """
-    with driver.session() as s:
-        rec = s.run(q).single()
-    return dict(rec) if rec else {}
 
 import functools
 
@@ -203,6 +178,104 @@ def show_graph_for_question(driver, question: str, max_edges: int = 80):
         net.show(tmp.name)
         html = open(tmp.name, "r", encoding="utf-8").read()
         components.html(html, height=550, scrolling=True)
+# --- New: Query–Similarity–Entity graph --------------------------------------
+from pyvis.network import Network
+import streamlit.components.v1 as components
+from collections import defaultdict
+
+def show_query_semantic_graph(question: str,
+                              rows: list,            # [(Document, sim_float), ...]
+                              neo_driver=None,
+                              max_entity_edges: int = 80,
+                              show_chunks: bool = False):
+    """
+    Renders an interactive graph:
+      • 🔎 Query node
+      • Query → Chunk edges weighted by cosine similarity (optional)
+      • Query → Entity edges weighted by best (max) similarity from any chunk mentioning that entity
+      • (optional) KG overlay: Entity ↔ Entity edges from Neo4j within 1–2 hops
+    """
+    if not question.strip() or not rows:
+        st.info("No data to visualize yet.")
+        return
+
+    # 1) Collect entities per chunk and their best similarity to the query
+    ent2bestsim = defaultdict(float)
+    chunk_nodes = []
+    canon = Canon()
+    for i, (doc, sim) in enumerate(rows, 1):
+        text = getattr(doc, "page_content", "") or ""
+        meta = dict(getattr(doc, "metadata", {}) or {})
+        ents_raw = extract_entities(text) or []
+        ents = {canon.canonical(e) for e in ents_raw if e and e.strip()}
+        for e in ents:
+            if sim > ent2bestsim[e]:
+                ent2bestsim[e] = sim
+        chunk_nodes.append((i, text, meta, ents, sim))
+
+    # 2) Build network
+    net = Network(height="560px", width="100%", bgcolor="#FFFFFF", font_color="#222")
+    net.barnes_hut()
+
+    q_id = f"Q::{hash(question)}"
+    q_label = "🔎 " + (question[:60] + ("…" if len(question) > 60 else ""))
+    net.add_node(q_id, label=q_label, title=question, color="#FFB300", shape="ellipse", size=26)
+
+    # 3) (Optional) chunks as boxes + similarity edges
+    if show_chunks:
+        for (i, text, meta, ents, sim) in chunk_nodes:
+            c_id = f"C::{i}"
+            cite = []
+            if "url" in meta: cite.append(meta["url"])
+            if "source" in meta and "url" not in meta: cite.append(Path(meta["source"]).name)
+            if "page" in meta:  cite.append(f"p.{meta['page']}")
+            if "slide" in meta: cite.append(f"slide {meta['slide']}")
+            title = (text[:400] + ("…" if len(text) > 400 else "")) + ("\n" + " • ".join(cite) if cite else "")
+            net.add_node(c_id, label=f"Chunk {i}", title=title, color="#90CAF9", shape="box")
+            width = max(1, int(1 + 7*max(0.0, min(1.0, sim))))
+            net.add_edge(q_id, c_id, label=f"sim={sim:.2f}", width=width)
+
+    # 4) Entities as dots + weighted edges from Query (by best sim)
+    for ent, best_sim in sorted(ent2bestsim.items(), key=lambda x: x[1], reverse=True):
+        e_id = f"E::{ent}"
+        net.add_node(e_id, label=ent, color="#43A047", shape="dot")
+        width = max(1, int(1 + 7*max(0.0, min(1.0, best_sim))))
+        net.add_edge(q_id, e_id, label=f"sim={best_sim:.2f}", width=width)
+
+    # 5) (Optional) chunk→entity mention edges for provenance
+    if show_chunks:
+        for (i, _text, _meta, ents, _sim) in chunk_nodes:
+            c_id = f"C::{i}"
+            for ent in ents:
+                net.add_edge(c_id, f"E::{ent}", label="MENTIONS", color="#BDBDBD")
+
+    # 6) (Optional) overlay KG edges between these entities
+    if neo_driver and ent2bestsim:
+        ents = list(ent2bestsim.keys())
+        cypher = """
+        MATCH (e:Entity) WHERE e.name IN $ents
+        MATCH p=(e)-[r*1..2]-(n:Entity)
+        WITH p, r LIMIT $max
+        UNWIND r AS rel
+        WITH DISTINCT startNode(rel) AS s, rel, endNode(rel) AS t
+        RETURN s.name AS source, type(rel) AS rel_type, t.name AS target
+        """
+        try:
+            with neo_driver.session() as s:
+                data = s.run(cypher, ents=ents, max=max_entity_edges).data()
+            for row in data or []:
+                src, rel, tgt = row["source"], row["rel_type"], row["target"]
+                net.add_node(f"E::{src}", label=src, color="#43A047", shape="dot")
+                net.add_node(f"E::{tgt}", label=tgt, color="#43A047", shape="dot")
+                net.add_edge(f"E::{src}", f"E::{tgt}", label=rel, color="#9E9E9E")
+        except Exception as e:
+            st.warning(f"KG overlay skipped: {e}")
+
+    # 7) Render
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".html") as tmp:
+        net.show(tmp.name)
+        html = open(tmp.name, "r", encoding="utf-8").read()
+        components.html(html, height=580, scrolling=True)
 
 
 @st.cache_resource(show_spinner=False)
@@ -1161,9 +1234,6 @@ def _cosine(a, b):
 
 
 # Cache embeddings to avoid re-encoding the same text in preview
-@lru_cache(maxsize=10_000)
-def _embed_cached(emb, text: str):
-    return tuple(emb.embed_query(text))  # tuple so it becomes hashable for cache
 
 
 def preview_top_k_same_retriever_cos(query: str, ret, emb, k: int):
@@ -1639,6 +1709,14 @@ if retriever and q:
     st.subheader("Preview Top-k")
     rows = preview_top_k_same_retriever_cos(q, ret, embedder, k)
 
+    st.subheader("🔗 Question–Similarity–Entity Graph")
+    show_chunks_toggle = st.checkbox("Show chunk nodes", value=False, key="qse_show_chunks")
+    kg_overlay = neo_driver if (KG_ENABLED and neo_driver) else None
+    show_query_semantic_graph(q, rows, neo_driver=kg_overlay,
+                            max_entity_edges=st.session_state.get("KG_MAX_EDGES", 60),
+                            show_chunks=show_chunks_toggle)
+
+
     for i, (doc, sim) in enumerate(rows, 1):
         meta = dict(getattr(doc, "metadata", {}) or {})
         text = getattr(doc, "page_content", "")
@@ -1747,7 +1825,17 @@ if retriever and q:
 
     st.markdown("---")
     
-if KG_ENABLED and neo_driver and q.strip():
-    with st.expander("📊 View KG subgraph for this question", expanded=False):
-        if st.button("Show graph view"):
+# ========================= KG: Visualize subgraph =========================
+# ========================= KG: Visualize subgraph =========================
+if KG_ENABLED and neo_driver and q.strip() and 'rows' in locals():
+    tab1, tab2 = st.tabs(["🔗 Similarity Graph", "🕸️ KG Subgraph"])
+    with tab1:
+        show_chunks_toggle2 = st.checkbox("Show chunk nodes (provenance)", value=False, key="qse_chunks_tab")
+        show_query_semantic_graph(
+            q, rows, neo_driver=neo_driver,
+            max_entity_edges=KG_MAX_EDGES,
+            show_chunks=show_chunks_toggle2
+        )
+    with tab2:
+        if st.button("Show KG subgraph (entities only)"):
             show_graph_for_question(neo_driver, q, max_edges=KG_MAX_EDGES)
