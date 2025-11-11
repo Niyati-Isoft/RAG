@@ -302,148 +302,28 @@ def show_graph_for_question(driver, question: str, max_edges: int = 80):
 # --- UPDATED: Query–Similarity–Entity graph -----------------------------------
 from collections import defaultdict
 
-# def show_query_semantic_graph(question: str,
-#                               rows: list,            # [(Document, sim_float), ...]
-#                               neo_driver=None,
-#                               max_entity_edges: int = 80,
-#                               show_chunks: bool = False):
-#     """
-#     Renders an interactive graph:
-#       • 🔎 Query node
-#       • Query → Chunk edges weighted by cosine similarity (optional)
-#       • Query → Entity edges weighted by best (max) similarity from any chunk mentioning that entity
-#       • (optional) KG overlay: Entity ↔ Entity edges from Neo4j within 1–2 hops
-#     """
-#     if not question.strip() or not rows:
-#         st.info("No data to visualize yet.")
-#         return
-
-#     # 1) Collect entities per chunk and their best similarity to the query
-#     ent2bestsim = defaultdict(float)
-#     chunk_nodes = []
-#     canon = Canon()
-
-#     for i, (doc, sim) in enumerate(rows, 1):
-#         text = getattr(doc, "page_content", "") or ""
-#         meta = dict(getattr(doc, "metadata", {}) or {})
-#         ents_raw = extract_entities(text) or []
-#         ents = {canon.canonical(e) for e in ents_raw if e and e.strip()}
-#         for e in ents:
-#             if sim > ent2bestsim[e]:
-#                 ent2bestsim[e] = sim
-#         chunk_nodes.append((i, text, meta, ents, sim))
-
-#     # 2) Build PyVis network AND raw lists for fallback
-#     net = Network(height="560px", width="100%", bgcolor="#FFFFFF", font_color="#222", notebook=False)
-#     net.barnes_hut()
-
-#     nodes_list, edges_list, seen = [], [], set()
-
-#     # Query node
-#     q_id = f"Q::{hash(question)}"
-#     q_label = "🔎 " + (question[:60] + ("…" if len(question) > 60 else ""))
-#     net.add_node(q_id, label=q_label, title=question, color="#FFB300", shape="ellipse")
-#     nodes_list.append({"id": q_id, "label": q_label, "title": question, "color": "#FFB300", "shape": "ellipse"})
-
-#     # 3) (Optional) chunks as boxes + similarity edges
-#     if show_chunks:
-#         for (i, text, meta, ents, sim) in chunk_nodes:
-#             c_id = f"C::{i}"
-#             if ("C", c_id) not in seen:
-#                 cite = []
-#                 if "url" in meta: cite.append(meta["url"])
-#                 if "source" in meta and "url" not in meta: cite.append(Path(meta["source"]).name)
-#                 if "page" in meta:  cite.append(f"p.{meta['page']}")
-#                 if "slide" in meta: cite.append(f"slide {meta['slide']}")
-#                 title = (text[:400] + ("…" if len(text) > 400 else "")) + ("\n" + " • ".join(cite) if cite else "")
-#                 net.add_node(c_id, label=f"Chunk {i}", title=title, color="#90CAF9", shape="box")
-#                 nodes_list.append({"id": c_id, "label": f"Chunk {i}", "title": title, "color": "#90CAF9", "shape": "box"})
-#                 seen.add(("C", c_id))
-
-#             width = max(1, int(1 + 7*max(0.0, min(1.0, sim))))
-#             net.add_edge(q_id, c_id, label=f"sim={sim:.2f}", width=width)
-#             edges_list.append({"from": q_id, "to": c_id, "label": f"sim={sim:.2f}", "width": width})
-
-#     # 4) Entities as dots + weighted edges from Query (by best sim)
-#     for ent, best_sim in sorted(ent2bestsim.items(), key=lambda x: x[1], reverse=True):
-#         e_id = f"E::{ent}"
-#         if ("E", e_id) not in seen:
-#             net.add_node(e_id, label=ent, color="#43A047", shape="dot")
-#             nodes_list.append({"id": e_id, "label": ent, "color": "#43A047", "shape": "dot"})
-#             seen.add(("E", e_id))
-#         width = max(1, int(1 + 7*max(0.0, min(1.0, best_sim))))
-#         net.add_edge(q_id, e_id, label=f"sim={best_sim:.2f}", width=width)
-#         edges_list.append({"from": q_id, "to": e_id, "label": f"sim={best_sim:.2f}", "width": width})
-
-#     # 5) (Optional) chunk→entity mention edges for provenance
-#     if show_chunks:
-#         for (i, _text, _meta, ents, _sim) in chunk_nodes:
-#             c_id = f"C::{i}"
-#             for ent in ents:
-#                 e_id = f"E::{ent}"
-#                 net.add_edge(c_id, e_id, label="MENTIONS", color="#BDBDBD")
-#                 edges_list.append({"from": c_id, "to": e_id, "label": "MENTIONS", "color": "#BDBDBD"})
-
-#     # 6) (Optional) overlay KG edges between these entities
-#     if neo_driver and ent2bestsim:
-#         ents = list(ent2bestsim.keys())
-#         cypher = """
-#         MATCH (e:Entity) WHERE e.name IN $ents
-#         MATCH p=(e)-[r*1..2]-(n:Entity)
-#         WITH p, r LIMIT $max
-#         UNWIND r AS rel
-#         WITH DISTINCT startNode(rel) AS s, rel, endNode(rel) AS t
-#         RETURN s.name AS source, type(rel) AS rel_type, t.name AS target
-#         """
-#         try:
-#             with neo_driver.session() as s:
-#                 data = s.run(cypher, ents=ents, max=max_entity_edges).data()
-#             for row in data or []:
-#                 src, rel, tgt = row["source"], row["rel_type"], row["target"]
-#                 for lbl in (src, tgt):
-#                     e_id = f"E::{lbl}"
-#                     if ("E", e_id) not in seen:
-#                         net.add_node(e_id, label=lbl, color="#43A047", shape="dot")
-#                         nodes_list.append({"id": e_id, "label": lbl, "color": "#43A047", "shape": "dot"})
-#                         seen.add(("E", e_id))
-#                 net.add_edge(f"E::{src}", f"E::{tgt}", label=rel, color="#9E9E9E")
-#                 edges_list.append({"from": f"E::{src}", "to": f"E::{tgt}", "label": rel, "color": "#9E9E9E"})
-#         except Exception as e:
-#             st.warning(f"KG overlay skipped: {e}")
-
-#     # 7) Render (PyVis first; fallback to vis-network)
-#     _render_pyvis_or_fallback(net, nodes_list, edges_list, height_px=580)
-def show_query_semantic_graph(
-    question: str,
-    rows: list,                 # [(Document, sim_float), ...]
-    neo_driver=None,
-    max_entity_edges: int = 80,
-    show_chunks: bool = True,   # show question -> chunk edges
-    top_chunks: int = 10,       # how many chunks to display
-    highlight_n: int = 3        # how many highest-similarity chunks to highlight (yellow)
-):
+def show_query_semantic_graph(question: str,
+                              rows: list,            # [(Document, sim_float), ...]
+                              neo_driver=None,
+                              max_entity_edges: int = 80,
+                              show_chunks: bool = False):
     """
     Renders an interactive graph:
       • 🔎 Query node
-      • 🔗 Query → TOP-N Chunk nodes (optionally)
-      • 🟢 Query → Entity nodes (score-weighted)
-      • ⚪ (optional) KG overlay: Entity ↔ Entity edges from Neo4j within 1–2 hops
+      • Query → Chunk edges weighted by cosine similarity (optional)
+      • Query → Entity edges weighted by best (max) similarity from any chunk mentioning that entity
+      • (optional) KG overlay: Entity ↔ Entity edges from Neo4j within 1–2 hops
     """
     if not question.strip() or not rows:
         st.info("No data to visualize yet.")
         return
 
-    # --- sort & keep only the top-N rows by similarity ---
-    rows_sorted = sorted(rows, key=lambda x: x[1], reverse=True)
-    rows_use    = rows_sorted[:max(0, int(top_chunks))]
-    top_high    = set(range(min(highlight_n, len(rows_use))))  # indices to highlight
-
-    # ---- collect entities from the used chunks only ----
+    # 1) Collect entities per chunk and their best similarity to the query
     ent2bestsim = defaultdict(float)
     chunk_nodes = []
     canon = Canon()
 
-    for i, (doc, sim) in enumerate(rows_use):  # i is 0-based for top_high set
+    for i, (doc, sim) in enumerate(rows, 1):
         text = getattr(doc, "page_content", "") or ""
         meta = dict(getattr(doc, "metadata", {}) or {})
         ents_raw = extract_entities(text) or []
@@ -451,19 +331,9 @@ def show_query_semantic_graph(
         for e in ents:
             if sim > ent2bestsim[e]:
                 ent2bestsim[e] = sim
-        # store 1-based chunk label but keep zero-based index `i` for highlight set
         chunk_nodes.append((i, text, meta, ents, sim))
 
-    # --- colors/styles ---
-    COL_Q          = "#FFB300"   # amber
-    COL_CHUNK_TOP  = "#FFC107"   # yellow (highlight)
-    COL_CHUNK      = "#B0BEC5"   # light gray/blue
-    COL_ENTITY     = "#43A047"   # green
-    COL_SIM        = "#9E9E9E"   # gray for non-highlighted sim edges
-    COL_MENTION    = "#BDBDBD"   # light gray
-    COL_KG_EDGE    = "#9E9E9E"   # gray
-
-    # --- build PyVis + fallback lists ---
+    # 2) Build PyVis network AND raw lists for fallback
     net = Network(height="560px", width="100%", bgcolor="#FFFFFF", font_color="#222", notebook=False)
     net.barnes_hut()
 
@@ -472,57 +342,49 @@ def show_query_semantic_graph(
     # Query node
     q_id = f"Q::{hash(question)}"
     q_label = "🔎 " + (question[:60] + ("…" if len(question) > 60 else ""))
-    net.add_node(q_id, label=q_label, title=question, color=COL_Q, shape="ellipse", size=26)
-    nodes_list.append({"id": q_id, "label": q_label, "title": question, "color": COL_Q, "shape": "ellipse"})
+    net.add_node(q_id, label=q_label, title=question, color="#FFB300", shape="ellipse")
+    nodes_list.append({"id": q_id, "label": q_label, "title": question, "color": "#FFB300", "shape": "ellipse"})
 
-    # --- 3) Chunks (explicit question → chunk edges) ---
-    if show_chunks and chunk_nodes:
-        for (idx0, text, meta, ents, sim) in chunk_nodes:
-            i_display = idx0 + 1
-            c_id = f"C::{i_display}"
-            is_top = idx0 in top_high
+    # 3) (Optional) chunks as boxes + similarity edges
+    if show_chunks:
+        for (i, text, meta, ents, sim) in chunk_nodes:
+            c_id = f"C::{i}"
+            if ("C", c_id) not in seen:
+                cite = []
+                if "url" in meta: cite.append(meta["url"])
+                if "source" in meta and "url" not in meta: cite.append(Path(meta["source"]).name)
+                if "page" in meta:  cite.append(f"p.{meta['page']}")
+                if "slide" in meta: cite.append(f"slide {meta['slide']}")
+                title = (text[:400] + ("…" if len(text) > 400 else "")) + ("\n" + " • ".join(cite) if cite else "")
+                net.add_node(c_id, label=f"Chunk {i}", title=title, color="#90CAF9", shape="box")
+                nodes_list.append({"id": c_id, "label": f"Chunk {i}", "title": title, "color": "#90CAF9", "shape": "box"})
+                seen.add(("C", c_id))
 
-            cite = []
-            if "url" in meta: cite.append(meta["url"])
-            if "source" in meta and "url" not in meta: cite.append(Path(meta["source"]).name)
-            if "page" in meta:  cite.append(f"p.{meta['page']}")
-            if "slide" in meta: cite.append(f"slide {meta['slide']}")
-            title = (text[:400] + ("…" if len(text) > 400 else "")) + ("\n" + " • ".join(cite) if cite else "")
+            width = max(1, int(1 + 7*max(0.0, min(1.0, sim))))
+            net.add_edge(q_id, c_id, label=f"sim={sim:.2f}", width=width)
+            edges_list.append({"from": q_id, "to": c_id, "label": f"sim={sim:.2f}", "width": width})
 
-            node_color = COL_CHUNK_TOP if is_top else COL_CHUNK
-            edge_color = node_color if is_top else COL_SIM
-            width = max(1, int(1 + 7*max(0.0, min(1.0, float(sim)))))
-
-            # chunk node
-            net.add_node(c_id, label=f"Chunk {i_display}", title=title, color=node_color, shape="box")
-            nodes_list.append({"id": c_id, "label": f"Chunk {i_display}", "title": title,
-                               "color": node_color, "shape": "box"})
-
-            # question → chunk edge (shows similarity)
-            net.add_edge(q_id, c_id, label=f"sim={sim:.2f}", width=width, color=edge_color)
-            edges_list.append({"from": q_id, "to": c_id, "label": f"sim={sim:.2f}", "width": width, "color": edge_color})
-
-    # --- 4) Entities (question → entity edges weighted by best sim across used chunks) ---
+    # 4) Entities as dots + weighted edges from Query (by best sim)
     for ent, best_sim in sorted(ent2bestsim.items(), key=lambda x: x[1], reverse=True):
         e_id = f"E::{ent}"
         if ("E", e_id) not in seen:
-            net.add_node(e_id, label=ent, color=COL_ENTITY, shape="dot")
-            nodes_list.append({"id": e_id, "label": ent, "color": COL_ENTITY, "shape": "dot"})
+            net.add_node(e_id, label=ent, color="#43A047", shape="dot")
+            nodes_list.append({"id": e_id, "label": ent, "color": "#43A047", "shape": "dot"})
             seen.add(("E", e_id))
-        width = max(1, int(1 + 7*max(0.0, min(1.0, float(best_sim)))))
-        net.add_edge(q_id, e_id, label=f"sim={best_sim:.2f}", width=width, color=COL_SIM)
-        edges_list.append({"from": q_id, "to": e_id, "label": f"sim={best_sim:.2f}", "width": width, "color": COL_SIM})
+        width = max(1, int(1 + 7*max(0.0, min(1.0, best_sim))))
+        net.add_edge(q_id, e_id, label=f"sim={best_sim:.2f}", width=width)
+        edges_list.append({"from": q_id, "to": e_id, "label": f"sim={best_sim:.2f}", "width": width})
 
-    # --- 5) Chunk → Entity “MENTIONS” edges (provenance) ---
+    # 5) (Optional) chunk→entity mention edges for provenance
     if show_chunks:
-        for (idx0, _text, _meta, ents, _sim) in chunk_nodes:
-            c_id = f"C::{idx0+1}"
+        for (i, _text, _meta, ents, _sim) in chunk_nodes:
+            c_id = f"C::{i}"
             for ent in ents:
                 e_id = f"E::{ent}"
-                net.add_edge(c_id, e_id, label="MENTIONS", color=COL_MENTION)
-                edges_list.append({"from": c_id, "to": e_id, "label": "MENTIONS", "color": COL_MENTION})
+                net.add_edge(c_id, e_id, label="MENTIONS", color="#BDBDBD")
+                edges_list.append({"from": c_id, "to": e_id, "label": "MENTIONS", "color": "#BDBDBD"})
 
-    # --- 6) Optional Neo4j overlay among those entities (1–2 hops) ---
+    # 6) (Optional) overlay KG edges between these entities
     if neo_driver and ent2bestsim:
         ents = list(ent2bestsim.keys())
         cypher = """
@@ -541,19 +403,16 @@ def show_query_semantic_graph(
                 for lbl in (src, tgt):
                     e_id = f"E::{lbl}"
                     if ("E", e_id) not in seen:
-                        net.add_node(e_id, label=lbl, color=COL_ENTITY, shape="dot")
-                        nodes_list.append({"id": e_id, "label": lbl, "color": COL_ENTITY, "shape": "dot"})
+                        net.add_node(e_id, label=lbl, color="#43A047", shape="dot")
+                        nodes_list.append({"id": e_id, "label": lbl, "color": "#43A047", "shape": "dot"})
                         seen.add(("E", e_id))
-                net.add_edge(f"E::{src}", f"E::{tgt}", label=rel, color=COL_KG_EDGE)
-                edges_list.append({"from": f"E::{src}", "to": f"E::{tgt}", "label": rel, "color": COL_KG_EDGE})
+                net.add_edge(f"E::{src}", f"E::{tgt}", label=rel, color="#9E9E9E")
+                edges_list.append({"from": f"E::{src}", "to": f"E::{tgt}", "label": rel, "color": "#9E9E9E"})
         except Exception as e:
             st.warning(f"KG overlay skipped: {e}")
 
-    # --- 7) Render (PyVis first; fallback to vis-network with zoom/pan) ---
-    _render_pyvis_or_fallback(net, nodes_list, edges_list, height_px=600)
-
-    # tiny legend
-    st.caption("Legend: 🔶 question · 🟨 top-similarity chunks · ⬜ other chunks · 🟢 entities · ⚪ KG edges")
+    # 7) Render (PyVis first; fallback to vis-network)
+    _render_pyvis_or_fallback(net, nodes_list, edges_list, height_px=580)
 
 
 @st.cache_resource(show_spinner=False)
@@ -2095,20 +1954,13 @@ if retriever and q:
 
     st.markdown("---")
 
-    # ========================= KG: Visualize subgraph =========================
-    st.subheader("🔗 Question–Similarity–Entity Graph")
-    show_chunks_toggle = st.checkbox("Show chunk nodes", value=False, key="qse_show_chunks")
-    kg_overlay = neo_driver if (KG_ENABLED and neo_driver) else None
-    show_query_semantic_graph(
-        q,
-        rows,
-        neo_driver=kg_overlay,
-        max_entity_edges=st.session_state.get("KG_MAX_EDGES", 60),
-        show_chunks=True,       # show the chunk boxes + question→chunk edges
-        top_chunks=10,          # show 10 chunks
-        highlight_n=3           # make top-3 chunks yellow (set 10 to highlight all 10)
-    )
-
+# ========================= KG: Visualize subgraph =========================
+st.subheader("🔗 Question–Similarity–Entity Graph")
+show_chunks_toggle = st.checkbox("Show chunk nodes", value=False, key="qse_show_chunks")
+kg_overlay = neo_driver if (KG_ENABLED and neo_driver) else None
+show_query_semantic_graph(q, rows, neo_driver=kg_overlay,
+                        max_entity_edges=st.session_state.get("KG_MAX_EDGES", 60),
+                        show_chunks=show_chunks_toggle)
 
 if KG_ENABLED and neo_driver and q.strip() and 'rows' in locals():
     tab1, tab2 = st.tabs(["🔗 Similarity Graph", "🕸️ KG Subgraph"])
