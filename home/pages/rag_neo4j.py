@@ -146,21 +146,78 @@ import json, tempfile
 from pyvis.network import Network
 import streamlit.components.v1 as components
 
-def _render_pyvis_or_fallback(net: Network, nodes_list: list, edges_list: list, height_px: int = 580):
+import json
+import streamlit.components.v1 as components
+
+def _render_pyvis_or_fallback(net, nodes_list, edges_list, height_px: int = 580):
     """
-    Try to render with PyVis. If its Jinja2 template isn't available (AttributeError: render),
-    fall back to a minimal vis-network HTML embed that doesn't depend on Jinja2.
+    Try to render with PyVis. If PyVis/Jinja trips ('NoneType.render' etc.),
+    fall back to a raw vis-network HTML embed with full zoom/drag controls.
     """
+    # ---- Attempt PyVis first (works when pyvis/jinja is healthy) ----
     try:
+        import tempfile
         with tempfile.NamedTemporaryFile(delete=False, suffix=".html") as tmp:
-            # Use write_html instead of show(); avoids some notebook checks
+            # Use write_html instead of show(); avoids some notebook/template paths
             net.write_html(tmp.name, open_browser=False, notebook=False)
             html = open(tmp.name, "r", encoding="utf-8").read()
         components.html(html, height=height_px, scrolling=True)
         return
-    except Exception:
-        # fallback to pure vis-network
-        _vis_embed(nodes_list, edges_list, height_px)
+    except Exception as e:
+        # Streamlit note + graceful fallback
+        import streamlit as st
+        st.info(f"Using vis-network fallback (PyVis render failed: {e})")
+
+    # ---- Fallback: vis-network (zoom, pan, buttons, keyboard) ----
+    html = f"""
+        <!doctype html>
+        <html>
+        <head>
+        <meta charset="utf-8" />
+        <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+        <style>
+            #mynetwork {{
+            height: {height_px}px;
+            width: 100%;
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            background: #ffffff;
+            }}
+        </style>
+        </head>
+        <body>
+        <div id="mynetwork"></div>
+        <script>
+            const nodes = new vis.DataSet({json.dumps(nodes_list)});
+            const edges = new vis.DataSet({json.dumps(edges_list)});
+            const container = document.getElementById('mynetwork');
+            const data = {{ nodes, edges }};
+            const options = {{
+            physics: {{ stabilization: true }},
+            edges: {{
+                smooth: true
+            }},
+            interaction: {{
+                dragNodes: true,
+                dragView: true,
+                zoomView: true,          // ✅ mousewheel zoom
+                hover: true,
+                multiselect: true,
+                navigationButtons: true, // ✅ on-canvas zoom/pan buttons
+                keyboard: true           // ✅ arrow-key panning
+            }},
+            manipulation: false
+            }};
+            const network = new vis.Network(container, data, options);
+
+            // Optional: fit view initially
+            network.once("stabilizationIterationsDone", () => network.fit({{ animation: false }}));
+        </script>
+        </body>
+        </html>
+        """
+    components.html(html, height=height_px, scrolling=False)
+
 
 def _vis_embed(nodes_list: list, edges_list: list, height_px: int = 580):
     """
