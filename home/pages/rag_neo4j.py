@@ -461,7 +461,7 @@ st.title("🎛️ Multimedia Token-based RAG")
 
 with st.sidebar:
     st.markdown("**Vector DB Backend**")
-    BACKEND = st.selectbox("Choose vector store", ["FAISS (local folder)", "Weaviate (remote)"], index=0)
+    BACKEND = st.selectbox("Choose vector store", ["FAISS (local folder)", "Weaviate (remote)"], index=1)
 
     # Weaviate settings
     _WEAV = st.secrets.get("weaviate", {}) if hasattr(st, "secrets") else {}
@@ -1965,7 +1965,7 @@ if retriever and q:
 if KG_ENABLED and neo_driver and q.strip() and 'rows' in locals():
     tab1, tab2 = st.tabs(["🔗 Similarity Graph", "🕸️ KG Subgraph"])
     with tab1:
-        show_chunks_toggle2 = st.checkbox("Show chunk nodes (provenance)", value=False, key="qse_chunks_tab")
+        show_chunks_toggle2 = st.checkbox("Show chunk nodes (provenance)", value=True, key="qse_chunks_tab")
         show_query_semantic_graph(
             q, rows, neo_driver=neo_driver,
             max_entity_edges=KG_MAX_EDGES,
