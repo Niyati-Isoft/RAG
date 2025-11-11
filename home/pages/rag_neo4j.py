@@ -2095,19 +2095,19 @@ if retriever and q:
 
     st.markdown("---")
 
-# ========================= KG: Visualize subgraph =========================
-st.subheader("🔗 Question–Similarity–Entity Graph")
-show_chunks_toggle = st.checkbox("Show chunk nodes", value=False, key="qse_show_chunks")
-kg_overlay = neo_driver if (KG_ENABLED and neo_driver) else None
-show_query_semantic_graph(
-    q,
-    rows,
-    neo_driver=kg_overlay,
-    max_entity_edges=st.session_state.get("KG_MAX_EDGES", 60),
-    show_chunks=True,       # show the chunk boxes + question→chunk edges
-    top_chunks=10,          # show 10 chunks
-    highlight_n=3           # make top-3 chunks yellow (set 10 to highlight all 10)
-)
+    # ========================= KG: Visualize subgraph =========================
+    st.subheader("🔗 Question–Similarity–Entity Graph")
+    show_chunks_toggle = st.checkbox("Show chunk nodes", value=False, key="qse_show_chunks")
+    kg_overlay = neo_driver if (KG_ENABLED and neo_driver) else None
+    show_query_semantic_graph(
+        q,
+        rows,
+        neo_driver=kg_overlay,
+        max_entity_edges=st.session_state.get("KG_MAX_EDGES", 60),
+        show_chunks=True,       # show the chunk boxes + question→chunk edges
+        top_chunks=10,          # show 10 chunks
+        highlight_n=3           # make top-3 chunks yellow (set 10 to highlight all 10)
+    )
 
 
 if KG_ENABLED and neo_driver and q.strip() and 'rows' in locals():
