@@ -26,6 +26,8 @@ from langchain_community.vectorstores import FAISS
 from langchain_community.vectorstores.utils import DistanceStrategy
 # --- Router Agent (HEALTH vs GENERAL) ---
 import sys, os
+import json
+import streamlit.components.v1 as components  # keep one import
 
 # Ensure Streamlit can find the root directory (where routerAgent.py lives)
 ROOT_DIR = os.path.dirname(os.path.dirname(__file__))  # one level up from pages/
@@ -139,6 +141,57 @@ from pyvis.network import Network
 import tempfile
 import streamlit.components.v1 as components
 
+# --- Fixed graph render helpers (PyVis → fallback to vis-network HTML) ---
+import json, tempfile
+from pyvis.network import Network
+import streamlit.components.v1 as components
+
+def _render_pyvis_or_fallback(net: Network, nodes_list: list, edges_list: list, height_px: int = 580):
+    """
+    Try to render with PyVis. If its Jinja2 template isn't available (AttributeError: render),
+    fall back to a minimal vis-network HTML embed that doesn't depend on Jinja2.
+    """
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".html") as tmp:
+            # Use write_html instead of show(); avoids some notebook checks
+            net.write_html(tmp.name, open_browser=False, notebook=False)
+            html = open(tmp.name, "r", encoding="utf-8").read()
+        components.html(html, height=height_px, scrolling=True)
+        return
+    except Exception:
+        # fallback to pure vis-network
+        _vis_embed(nodes_list, edges_list, height_px)
+
+def _vis_embed(nodes_list: list, edges_list: list, height_px: int = 580):
+    """
+    Render an interactive network using client-side vis-network (no Jinja2 dependency).
+    """
+    html = f"""
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+</head>
+<body>
+  <div id="mynetwork" style="height:{height_px}px;width:100%;"></div>
+  <script>
+    const nodes = new vis.DataSet({json.dumps(nodes_list)});
+    const edges = new vis.DataSet({json.dumps(edges_list)});
+    const container = document.getElementById('mynetwork');
+    const data = {{ nodes, edges }};
+    const options = {{
+      physics: {{ stabilization: true }},
+      edges: {{ smooth: true }},
+      interaction: {{ hover: true, tooltipDelay: 120 }}
+    }};
+    new vis.Network(container, data, options);
+  </script>
+</body>
+</html>
+"""
+    components.html(html, height=height_px, scrolling=False)
+# --- UPDATED: KG subgraph (entities only) -------------------------------------
 def show_graph_for_question(driver, question: str, max_edges: int = 80):
     """Retrieve a small subgraph from Neo4j and render it interactively."""
     if not driver or not question.strip():
@@ -150,7 +203,7 @@ def show_graph_for_question(driver, question: str, max_edges: int = 80):
         st.info("No entities found for this question.")
         return
 
-    q = """
+    cypher = """
     MATCH (e:Entity) WHERE e.name IN $ents
     MATCH p=(e)-[r*1..2]-(n:Entity)
     WITH p, r LIMIT $max
@@ -159,28 +212,37 @@ def show_graph_for_question(driver, question: str, max_edges: int = 80):
     RETURN s.name AS source, type(rel) AS rel_type, t.name AS target
     """
     with driver.session() as s:
-        data = s.run(q, ents=ents, max=max_edges).data()
+        data = s.run(cypher, ents=ents, max=max_edges).data()
 
     if not data:
         st.info("No relationships found for these entities.")
         return
 
+    # Build PyVis network AND collect raw nodes/edges for fallback
     net = Network(height="500px", width="100%", bgcolor="#FFFFFF", font_color="#333333", notebook=False)
-    net.barnes_hut()  # nice layout
+    net.barnes_hut()
+
+    nodes_list, edges_list = [], []
+    seen = set()
 
     for row in data:
         src, rel, tgt = row["source"], row["rel_type"], row["target"]
-        net.add_node(src, label=src, color="#4CAF50")
-        net.add_node(tgt, label=tgt, color="#2196F3")
-        net.add_edge(src, tgt, label=rel, color="#999999")
 
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".html") as tmp:
-        net.show(tmp.name)
-        html = open(tmp.name, "r", encoding="utf-8").read()
-        components.html(html, height=550, scrolling=True)
-# --- New: Query–Similarity–Entity graph --------------------------------------
-from pyvis.network import Network
-import streamlit.components.v1 as components
+        if ("E", src) not in seen:
+            net.add_node(src, label=src, color="#4CAF50")
+            nodes_list.append({"id": src, "label": src, "color": "#4CAF50"})
+            seen.add(("E", src))
+
+        if ("E", tgt) not in seen:
+            net.add_node(tgt, label=tgt, color="#2196F3")
+            nodes_list.append({"id": tgt, "label": tgt, "color": "#2196F3"})
+            seen.add(("E", tgt))
+
+        net.add_edge(src, tgt, label=rel, color="#999999")
+        edges_list.append({"from": src, "to": tgt, "label": rel, "color": "#999999"})
+
+    _render_pyvis_or_fallback(net, nodes_list, edges_list, height_px=580)
+# --- UPDATED: Query–Similarity–Entity graph -----------------------------------
 from collections import defaultdict
 
 def show_query_semantic_graph(question: str,
@@ -203,6 +265,7 @@ def show_query_semantic_graph(question: str,
     ent2bestsim = defaultdict(float)
     chunk_nodes = []
     canon = Canon()
+
     for i, (doc, sim) in enumerate(rows, 1):
         text = getattr(doc, "page_content", "") or ""
         meta = dict(getattr(doc, "metadata", {}) or {})
@@ -213,41 +276,56 @@ def show_query_semantic_graph(question: str,
                 ent2bestsim[e] = sim
         chunk_nodes.append((i, text, meta, ents, sim))
 
-    # 2) Build network
-    net = Network(height="560px", width="100%", bgcolor="#FFFFFF", font_color="#222")
+    # 2) Build PyVis network AND raw lists for fallback
+    net = Network(height="560px", width="100%", bgcolor="#FFFFFF", font_color="#222", notebook=False)
     net.barnes_hut()
 
+    nodes_list, edges_list, seen = [], [], set()
+
+    # Query node
     q_id = f"Q::{hash(question)}"
     q_label = "🔎 " + (question[:60] + ("…" if len(question) > 60 else ""))
-    net.add_node(q_id, label=q_label, title=question, color="#FFB300", shape="ellipse", size=26)
+    net.add_node(q_id, label=q_label, title=question, color="#FFB300", shape="ellipse")
+    nodes_list.append({"id": q_id, "label": q_label, "title": question, "color": "#FFB300", "shape": "ellipse"})
 
     # 3) (Optional) chunks as boxes + similarity edges
     if show_chunks:
         for (i, text, meta, ents, sim) in chunk_nodes:
             c_id = f"C::{i}"
-            cite = []
-            if "url" in meta: cite.append(meta["url"])
-            if "source" in meta and "url" not in meta: cite.append(Path(meta["source"]).name)
-            if "page" in meta:  cite.append(f"p.{meta['page']}")
-            if "slide" in meta: cite.append(f"slide {meta['slide']}")
-            title = (text[:400] + ("…" if len(text) > 400 else "")) + ("\n" + " • ".join(cite) if cite else "")
-            net.add_node(c_id, label=f"Chunk {i}", title=title, color="#90CAF9", shape="box")
+            if ("C", c_id) not in seen:
+                cite = []
+                if "url" in meta: cite.append(meta["url"])
+                if "source" in meta and "url" not in meta: cite.append(Path(meta["source"]).name)
+                if "page" in meta:  cite.append(f"p.{meta['page']}")
+                if "slide" in meta: cite.append(f"slide {meta['slide']}")
+                title = (text[:400] + ("…" if len(text) > 400 else "")) + ("\n" + " • ".join(cite) if cite else "")
+                net.add_node(c_id, label=f"Chunk {i}", title=title, color="#90CAF9", shape="box")
+                nodes_list.append({"id": c_id, "label": f"Chunk {i}", "title": title, "color": "#90CAF9", "shape": "box"})
+                seen.add(("C", c_id))
+
             width = max(1, int(1 + 7*max(0.0, min(1.0, sim))))
             net.add_edge(q_id, c_id, label=f"sim={sim:.2f}", width=width)
+            edges_list.append({"from": q_id, "to": c_id, "label": f"sim={sim:.2f}", "width": width})
 
     # 4) Entities as dots + weighted edges from Query (by best sim)
     for ent, best_sim in sorted(ent2bestsim.items(), key=lambda x: x[1], reverse=True):
         e_id = f"E::{ent}"
-        net.add_node(e_id, label=ent, color="#43A047", shape="dot")
+        if ("E", e_id) not in seen:
+            net.add_node(e_id, label=ent, color="#43A047", shape="dot")
+            nodes_list.append({"id": e_id, "label": ent, "color": "#43A047", "shape": "dot"})
+            seen.add(("E", e_id))
         width = max(1, int(1 + 7*max(0.0, min(1.0, best_sim))))
         net.add_edge(q_id, e_id, label=f"sim={best_sim:.2f}", width=width)
+        edges_list.append({"from": q_id, "to": e_id, "label": f"sim={best_sim:.2f}", "width": width})
 
     # 5) (Optional) chunk→entity mention edges for provenance
     if show_chunks:
         for (i, _text, _meta, ents, _sim) in chunk_nodes:
             c_id = f"C::{i}"
             for ent in ents:
-                net.add_edge(c_id, f"E::{ent}", label="MENTIONS", color="#BDBDBD")
+                e_id = f"E::{ent}"
+                net.add_edge(c_id, e_id, label="MENTIONS", color="#BDBDBD")
+                edges_list.append({"from": c_id, "to": e_id, "label": "MENTIONS", "color": "#BDBDBD"})
 
     # 6) (Optional) overlay KG edges between these entities
     if neo_driver and ent2bestsim:
@@ -265,17 +343,19 @@ def show_query_semantic_graph(question: str,
                 data = s.run(cypher, ents=ents, max=max_entity_edges).data()
             for row in data or []:
                 src, rel, tgt = row["source"], row["rel_type"], row["target"]
-                net.add_node(f"E::{src}", label=src, color="#43A047", shape="dot")
-                net.add_node(f"E::{tgt}", label=tgt, color="#43A047", shape="dot")
+                for lbl in (src, tgt):
+                    e_id = f"E::{lbl}"
+                    if ("E", e_id) not in seen:
+                        net.add_node(e_id, label=lbl, color="#43A047", shape="dot")
+                        nodes_list.append({"id": e_id, "label": lbl, "color": "#43A047", "shape": "dot"})
+                        seen.add(("E", e_id))
                 net.add_edge(f"E::{src}", f"E::{tgt}", label=rel, color="#9E9E9E")
+                edges_list.append({"from": f"E::{src}", "to": f"E::{tgt}", "label": rel, "color": "#9E9E9E"})
         except Exception as e:
             st.warning(f"KG overlay skipped: {e}")
 
-    # 7) Render
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".html") as tmp:
-        net.show(tmp.name)
-        html = open(tmp.name, "r", encoding="utf-8").read()
-        components.html(html, height=580, scrolling=True)
+    # 7) Render (PyVis first; fallback to vis-network)
+    _render_pyvis_or_fallback(net, nodes_list, edges_list, height_px=580)
 
 
 @st.cache_resource(show_spinner=False)
@@ -1709,14 +1789,6 @@ if retriever and q:
     st.subheader("Preview Top-k")
     rows = preview_top_k_same_retriever_cos(q, ret, embedder, k)
 
-    st.subheader("🔗 Question–Similarity–Entity Graph")
-    show_chunks_toggle = st.checkbox("Show chunk nodes", value=False, key="qse_show_chunks")
-    kg_overlay = neo_driver if (KG_ENABLED and neo_driver) else None
-    show_query_semantic_graph(q, rows, neo_driver=kg_overlay,
-                            max_entity_edges=st.session_state.get("KG_MAX_EDGES", 60),
-                            show_chunks=show_chunks_toggle)
-
-
     for i, (doc, sim) in enumerate(rows, 1):
         meta = dict(getattr(doc, "metadata", {}) or {})
         text = getattr(doc, "page_content", "")
@@ -1824,9 +1896,15 @@ if retriever and q:
         st.write(draft_answer)
 
     st.markdown("---")
-    
+
 # ========================= KG: Visualize subgraph =========================
-# ========================= KG: Visualize subgraph =========================
+st.subheader("🔗 Question–Similarity–Entity Graph")
+    show_chunks_toggle = st.checkbox("Show chunk nodes", value=False, key="qse_show_chunks")
+    kg_overlay = neo_driver if (KG_ENABLED and neo_driver) else None
+    show_query_semantic_graph(q, rows, neo_driver=kg_overlay,
+                            max_entity_edges=st.session_state.get("KG_MAX_EDGES", 60),
+                            show_chunks=show_chunks_toggle)
+
 if KG_ENABLED and neo_driver and q.strip() and 'rows' in locals():
     tab1, tab2 = st.tabs(["🔗 Similarity Graph", "🕸️ KG Subgraph"])
     with tab1:
