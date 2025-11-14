@@ -1724,7 +1724,6 @@ with colkg1:
                         "source":   meta.get("source"),
                         "url":      meta.get("url"),
                         "page":     meta.get("page"),
-                        "slide":    meta.get("slide"),
                         "text":     text,
                         "types":    types_map or {},      # <- ensure dict
                         "conf":     0.7,
