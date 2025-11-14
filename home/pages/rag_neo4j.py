@@ -1945,38 +1945,49 @@ if retriever and q:
     # ---------- Stage 1: RAG draft (vector context only) ----------
     RAG_TEMPLATE_DRAFT_HEALTH = """
 You are a retrieval-augmented assistant limited to general **health and nutrition education**.
-Answer **only** using the retrieved context below.
-If there isn't enough information, say: "I don’t know from the provided context."
 
-<context>
-{context}
-</context>
+    Your job is to answer **only** using the text inside <context>. 
+    Do NOT add outside knowledge or assumptions.
+    If the context does not contain enough information, say exactly:
+    "I don’t know from the provided context."
 
-Question:
-{question}
+    When multiple pieces of information conflict, summarize each perspective briefly.
 
-Write a clear, factual draft answer for a layperson using only this context.
-Include small in-text citations like [1], [2] based on the numbered chunks when helpful.
-If the user describes urgent or severe symptoms, add:
-"This information is educational and not a medical diagnosis. Please seek professional care."
-""".strip()
+    <context>
+    {context}
+    </context>
+
+    Question:
+    {question}
+
+    Write a short, factual draft answer using only this context.
+    Include small in-text citations like [1], [2] referring to chunk numbers if helpful.
+
+    Draft Answer:
+    """.strip()
 
     RAG_TEMPLATE_DRAFT_GENERAL = """
 You are a precise retrieval-augmented assistant.
-Answer **only** using the retrieved context below.
-If insufficient, say: "I don’t know from the provided context."
-When sources conflict, summarize each briefly.
 
-<context>
-{context}
-</context>
+    Your job is to answer **only** using the text inside <context>. 
+    Do NOT add outside knowledge or assumptions.
+    If the context does not contain enough information, say exactly:
+    "I don’t know from the provided context."
 
-Question:
-{question}
+    When multiple pieces of information conflict, summarize each perspective briefly.
 
-Write a short, factual draft answer using only this context.
-Include small in-text citations like [1], [2] based on the numbered chunks when helpful.
-""".strip()
+    <context>
+    {context}
+    </context>
+
+    Question:
+    {question}
+
+    Write a short, factual draft answer using only this context.
+    Include small in-text citations like [1], [2] referring to chunk numbers if helpful.
+
+    Draft Answer:
+    """.strip()
 
     RAG_TEMPLATE_DRAFT = (
         RAG_TEMPLATE_DRAFT_HEALTH if effective_label == "health"
