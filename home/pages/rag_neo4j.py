@@ -1931,111 +1931,106 @@ if retriever and q:
             st.json(meta)
         st.markdown("---")
 
-    # ---------- Build vector context (existing) ----------
-    ctx, docs = build_context(ret, q)
+        # ---------- Build vector context (existing) ----------
+        ctx, docs = build_context(ret, q)
 
-    graph_ctx = ""
-    if KG_ENABLED and neo_driver:
-        try:
-            graph_ctx = kg_context_for_question(neo_driver, q, max_edges=KG_MAX_EDGES)
-        except Exception as e:
-            st.warning(f"KG retrieval skipped: {e}")
+        # (Optional) still compute graph_ctx ONLY for visualisations, not for answering
+        graph_ctx = ""
+        if KG_ENABLED and neo_driver:
+            try:
+                graph_ctx = kg_context_for_question(neo_driver, q, max_edges=KG_MAX_EDGES)
+            except Exception as e:
+                st.warning(f"KG retrieval skipped: {e}")
 
 
+        # ---------- Stage 1: RAG draft (use vector context only) ----------
+        RAG_TEMPLATE_DRAFT_HEALTH = """
+        You are a retrieval-augmented assistant limited to general **health and nutrition education**.
+        Answer **only** using the retrieved context below.
+        If there isn't enough information, say: "I don’t know from the provided context."
 
-    # ---------- Fuse ----------
-    fusion_ctx = ("GRAPH FACTS:\n" + (graph_ctx or "(none)")) + ("\n\nVECTOR CONTEXT:\n" + (ctx or "(none)"))
+        <context>
+        {context}
+        </context>
 
-    ## ---------- Stage 1: RAG draft (use fused context) ----------
-    RAG_TEMPLATE_DRAFT_HEALTH = """
-    You are a retrieval-augmented assistant limited to general **health and nutrition education**.
-    Answer **only** using the information below. Prefer GRAPH FACTS for relationships; use VECTOR CONTEXT for details/quotes.
-    If there isn't enough information, say: "I don’t know from the provided context."
+        Question:
+        {question}
 
-    <information>
-    {fusion}
-    </information>
+        Write a clear, factual draft answer for a layperson using only this context.
+        Include small in-text citations like [1], [2] based on the numbered chunks when helpful.
+        If the user describes urgent or severe symptoms, add:
+        "This information is educational and not a medical diagnosis. Please seek professional care."
+        """.strip()
 
-    Question:
-    {question}
+        RAG_TEMPLATE_DRAFT_GENERAL = """
+        You are a precise retrieval-augmented assistant.
+        Answer **only** using the retrieved context below.
+        If insufficient, say: "I don’t know from the provided context."
+        When sources conflict, summarize each briefly.
 
-    Write a clear, factual draft answer using only this information for a layperson.
-    Do NOT repeat the text from <information> itself or mention GRAPH FACTS / VECTOR CONTEXT by name.
-    Include small in-text citations like [1], [2] from the VECTOR CONTEXT section when helpful.
-    If the user describes urgent or severe symptoms, add:
-    "This information is educational and not a medical diagnosis. Please seek professional care."
-    """.strip()
+        <context>
+        {context}
+        </context>
 
-    RAG_TEMPLATE_DRAFT_GENERAL = """
-    You are a precise retrieval-augmented assistant.
-    Answer **only** using the information below. Prefer GRAPH FACTS for relationships; use VECTOR CONTEXT for details/quotes.
-    If insufficient, say: "I don’t know from the provided context."
-    When sources conflict, summarize each briefly.
+        Question:
+        {question}
 
-    <information>
-    {fusion}
-    </information>
+        Write a short, factual draft answer using only this context.
+        Include small in-text citations like [1], [2] based on the numbered chunks when helpful.
+        """.strip()
 
-    Question:
-    {question}
-
-    Write a short, factual draft answer using only this information.
-    Do NOT repeat the text from <information> itself or mention GRAPH FACTS / VECTOR CONTEXT by name.
-    Include small in-text citations like [1], [2] from the VECTOR CONTEXT section when helpful.
-    """.strip()
-
-    RAG_TEMPLATE_DRAFT = (
-        RAG_TEMPLATE_DRAFT_HEALTH if effective_label == "health"
-        else RAG_TEMPLATE_DRAFT_GENERAL
-    )
-    prompt_draft = PromptTemplate(
-        template=RAG_TEMPLATE_DRAFT,
-        input_variables=["question", "fusion"],
-    )
-
-    draft_answer = (
-        prompt_draft | llm | StrOutputParser()
-    ).invoke({"question": q, "fusion": fusion_ctx})
-
-    # ---------- Stage 2: Polish (clarity only; no new facts) ----------
-    if polish:
-        POLISH_TEMPLATE = """
-    You are editing the DRAFT_ANSWER for clarity and flow.
-
-    Rules:
-    - Use ONLY the facts already present in DRAFT_ANSWER.
-    - Do NOT introduce any new facts, numbers, or claims that are not in DRAFT_ANSWER.
-    - Use <information> only as background for checking consistency; do not quote it.
-    - Preserve any citations like [1], [2] that appear in the draft when appropriate.
-    - Return ONLY the improved answer text. Do not include headings, explanations,
-    or the words "DRAFT", "Paraphrased Answer", or any meta-commentary.
-
-    <information>
-    {fusion}
-    </information>
-
-    DRAFT_ANSWER:
-    {draft}
-    """.strip()
-
-        prompt_polish = PromptTemplate(
-            template=POLISH_TEMPLATE,
-            input_variables=["draft", "fusion"],
+        RAG_TEMPLATE_DRAFT = (
+            RAG_TEMPLATE_DRAFT_HEALTH if effective_label == "health"
+            else RAG_TEMPLATE_DRAFT_GENERAL
         )
-        polished_answer = (
-            prompt_polish | llm | StrOutputParser()
-        ).invoke({"draft": draft_answer, "fusion": fusion_ctx})
 
-        # ---- Show both draft and polished answers ----
-        st.subheader("Draft Answer")
-        st.write(draft_answer)
-        st.subheader("Polished Answer")
-        st.write(polished_answer)
-    else:
-        st.subheader("Draft Answer")
-        st.write(draft_answer)
+        prompt_draft = PromptTemplate(
+            template=RAG_TEMPLATE_DRAFT,
+            input_variables=["question", "context"],
+        )
 
-    st.markdown("---")
+        draft_answer = (
+            prompt_draft | llm | StrOutputParser()
+        ).invoke({"question": q, "context": ctx})
+
+
+        # ---------- Stage 2: Polish (clarity only; no new facts) ----------
+        if polish:
+            POLISH_TEMPLATE = """
+        You are editing the DRAFT_ANSWER for clarity and flow.
+
+        Rules:
+        - Use ONLY the facts already present in DRAFT_ANSWER.
+        - Do NOT introduce any new facts, numbers, or claims that are not in DRAFT_ANSWER.
+        - Preserve any citations like [1], [2] that appear in the draft when appropriate.
+        - Return ONLY the improved answer text. Do not include headings, explanations,
+        or the words "DRAFT", "Paraphrased Answer", or any meta-commentary.
+
+        DRAFT_ANSWER:
+        {draft}
+        """.strip()
+
+            prompt_polish = PromptTemplate(
+                template=POLISH_TEMPLATE,
+                input_variables=["draft"],
+            )
+
+            polished_answer = (
+                prompt_polish | llm | StrOutputParser()
+            ).invoke({"draft": draft_answer})
+
+            # ---- Show both draft and polished answers ----
+            st.subheader("Draft Answer")
+            st.write(draft_answer)
+
+            st.subheader("Polished Answer")
+            st.write(polished_answer)
+        else:
+            st.subheader("Draft Answer")
+            st.write(draft_answer)
+
+        st.markdown("---")
+
 
 
     # ========================= KG: Visualize subgraph =========================
