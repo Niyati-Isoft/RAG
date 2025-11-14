@@ -1733,6 +1733,20 @@ if st.button("🔁 Refresh KG cache"):
     kg_context_for_question.clear()   # clears cache_data for that function
     st.success("KG cache cleared.")
 
+st.subheader("🧹 Reset Knowledge Graph")
+
+if neo_driver and st.button("Delete all KG nodes (Entity + Chunk)"):
+    cypher = """
+    MATCH (e:Entity) DETACH DELETE e;
+    MATCH (c:Chunk) DETACH DELETE c;
+    """
+    try:
+        with neo_driver.session() as sess:
+            sess.run(cypher)
+        st.success("KG cleared: all Entity and Chunk nodes (and their relationships) deleted.")
+    except Exception as e:
+        st.error(f"Failed to clear KG: {e}")
+
 # ========================= Query / Preview / Answer =========================
 st.header("4) 🔎 Retrieve & 💬 Ask")
 q = st.text_input("Your question", value="High protein meal ideas")
