@@ -2027,11 +2027,10 @@ if retriever and q:
         ).invoke({"draft": draft_answer, "fusion": fusion_ctx})
 
         # ---- Show both draft and polished answers ----
-        tab_draft, tab_polished = st.tabs(["Draft Answer", "Polished Answer"])
-        with tab_draft:
-            st.write(draft_answer)
-        with tab_polished:
-            st.write(polished_answer)
+        st.subheader("Draft Answer")
+        st.write(draft_answer)
+        st.subheader("Polished Answer")
+        st.write(polished_answer)
     else:
         st.subheader("Draft Answer")
         st.write(draft_answer)
