@@ -1607,7 +1607,7 @@ if weav_client:
             agg = weav_client.query.aggregate(name).with_meta_count().do()
             n = agg["data"]["Aggregate"][name][0]["meta"]["count"]
             rows.append({"class": name, "objects": n})
-        st.dataframe(rows, use_container_width=True)
+        st.dataframe(rows, width='stretch')
 
         # Highlight the target class
         target = st.session_state.get("WEAV_INDEX", None) or WEAV_INDEX
