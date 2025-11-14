@@ -1577,6 +1577,17 @@ with colb3:
                 st.error(f"Failed to clear: {e}")
         else:
             st.info("For Weaviate, delete objects via Weaviate console/admin script (not from the app).")
+
+import weaviate
+client = weaviate.Client(url=WEAVIATE_URL, auth_client_secret=weaviate.AuthApiKey(api_key=WEAVIATE_APIKEY))
+
+schema = client.schema.get()
+for c in schema["classes"]:
+    name = c["class"]
+    count = client.query.aggregate(name).with_meta_count().do()
+    n = count["data"]["Aggregate"][name][0]["meta"]["count"]
+    print(f"{name}: {n} objects")
+
 # ========================= KG: Push triples =========================
 
 # ========================= Helper: Load docs from existing index for KG =========================
