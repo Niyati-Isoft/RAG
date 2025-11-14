@@ -1983,3 +1983,14 @@ if KG_ENABLED and neo_driver and q.strip() and 'rows' in locals():
     with tab2:
         if st.button("Show KG subgraph (entities only)"):
             show_graph_for_question(neo_driver, q, max_edges=KG_MAX_EDGES)
+
+
+import weaviate
+client = weaviate.Client(url=WEAVIATE_URL, auth_client_secret=weaviate.AuthApiKey(api_key=WEAVIATE_APIKEY))
+
+schema = client.schema.get()
+for c in schema["classes"]:
+    name = c["class"]
+    count = client.query.aggregate(name).with_meta_count().do()
+    n = count["data"]["Aggregate"][name][0]["meta"]["count"]
+    print(f"{name}: {n} objects")
