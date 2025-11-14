@@ -1550,19 +1550,34 @@ with colb2:
             db = load_index(INDEX_DIR)
             st.session_state.db = db
             st.session_state.retriever = make_retriever(db, k, fetch_k, lambda_mult) if db else None
-            st.success("Index loaded." if db else "No index found.")
+            st.success("FAISS index loaded." if db else "No FAISS index found.")
         else:
             if not weav_client:
                 st.error("Weaviate not configured.")
             else:
+                # Don’t create the class here; only connect if it exists
+                schema = weav_client.schema.get()
+                classes = {c["class"] for c in schema.get("classes", [])}
+                if WEAV_INDEX not in classes:
+                    st.warning(f"Class ‘{WEAV_INDEX}’ not found in this cluster.")
+                    st.stop()
+
+                # Check count
+                agg = weav_client.query.aggregate(WEAV_INDEX).with_meta_count().do()
+                n = agg["data"]["Aggregate"][WEAV_INDEX][0]["meta"]["count"]
+
                 db = load_index_weaviate(weav_client, WEAV_INDEX, WEAV_TEXT_KEY, embedder)
                 st.session_state.db = db
-                # 🔁 Use plain similarity for Weaviate
                 st.session_state.retriever = db.as_retriever(
                     search_type="similarity",
                     search_kwargs={"k": k}
                 ) if db else None
-                st.success(f"[Weaviate] Connected to '{WEAV_INDEX}'.")
+
+                if n > 0:
+                    st.success(f"[Weaviate] Connected to ‘{WEAV_INDEX}’ ({n} objects).")
+                else:
+                    st.info(f"[Weaviate] Connected to ‘{WEAV_INDEX}’ but it has 0 objects.")
+
 
 with colb3:
     if st.button("Clear index folder"):
@@ -1578,15 +1593,37 @@ with colb3:
         else:
             st.info("For Weaviate, delete objects via Weaviate console/admin script (not from the app).")
 
-import weaviate
-client = weaviate.Client(url=WEAVIATE_URL, auth_client_secret=weaviate.AuthApiKey(api_key=WEAVIATE_APIKEY))
+st.subheader("Weaviate debug")
 
-schema = client.schema.get()
-for c in schema["classes"]:
-    name = c["class"]
-    count = client.query.aggregate(name).with_meta_count().do()
-    n = count["data"]["Aggregate"][name][0]["meta"]["count"]
-    print(f"{name}: {n} objects")
+if weav_client:
+    try:
+        schema = weav_client.schema.get()
+        st.caption("Schema classes:")
+        st.json([c["class"] for c in schema.get("classes", [])])
+
+        rows = []
+        for c in schema.get("classes", []):
+            name = c["class"]
+            agg = weav_client.query.aggregate(name).with_meta_count().do()
+            n = agg["data"]["Aggregate"][name][0]["meta"]["count"]
+            rows.append({"class": name, "objects": n})
+        st.dataframe(rows, use_container_width=True)
+
+        # Highlight the target class
+        target = st.session_state.get("WEAV_INDEX", None) or WEAV_INDEX
+        if target:
+            found = any(c["class"] == target for c in schema.get("classes", []))
+            if found:
+                agg = weav_client.query.aggregate(target).with_meta_count().do()
+                n = agg["data"]["Aggregate"][target][0]["meta"]["count"]
+                st.success(f"‘{target}’ exists with {n} objects.")
+            else:
+                st.warning(f"‘{target}’ class not found in this cluster.")
+    except Exception as e:
+        st.error(f"Weaviate debug failed: {e}")
+else:
+    st.info("Weaviate client not configured.")
+
 
 # ========================= KG: Push triples =========================
 
