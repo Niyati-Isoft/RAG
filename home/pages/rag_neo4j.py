@@ -578,12 +578,7 @@ def _stable_id(s: str) -> str:
 
 import tldextract
 
-HEALTH_ALLOWLIST = {
-    "who.int","nih.gov","ncbi.nlm.nih.gov","pubmed.ncbi.nlm.nih.gov",
-    "cdc.gov","nhs.uk","health.gov.au","eatforhealth.gov.au",
-    "betterhealth.vic.gov.au","heartfoundation.org.au",
-    "diabetesaustralia.com.au","cancer.org.au","dietitiansaustralia.org.au"
-}
+HEALTH_ALLOWLIST = set()
 
 _HEALTH_KWS = {
     "nutrition","nutrient","diet","dietary","calorie","protein","carbohydrate","fat",
