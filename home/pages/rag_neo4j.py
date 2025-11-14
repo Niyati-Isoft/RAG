@@ -1932,6 +1932,7 @@ if retriever and q:
 
     # ---------- Build vector context (once) ----------
     ctx, docs = build_context(ret, q)
+    st.code(ctx, language="markdown")
 
     # (Optional) KG context only for graphs, not for answering
     graph_ctx = ""
