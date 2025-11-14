@@ -1584,23 +1584,37 @@ from langchain_core.documents import Document
 
 # ---- For Weaviate ----
 def fetch_docs_from_weaviate(client, index_name, text_key, limit=500):
-    """Pull up to 'limit' documents with text+metadata from Weaviate."""
     if client is None:
         return []
-    props = [text_key, "source", "url", "page", "slide", "sheet",
-             "start_sec", "end_sec", "topic", "source_domain"]
-    res = (client.query
-           .get(index_name, props)
-           .with_limit(limit)
-           .do())
+
+    # dynamically fetch all properties in schema instead of hardcoding
+    schema = client.schema.get()
+    classes = {c["class"]: c for c in schema.get("classes", [])}
+    props = [p["name"] for p in classes[index_name]["properties"]]
+
+    # ensure text_key is included
+    if text_key not in props:
+        props.append(text_key)
+
+    # Run query
+    res = (
+        client.query
+        .get(index_name, props)
+        .with_limit(limit)
+        .do()
+    )
+
     items = (res or {}).get("data", {}).get("Get", {}).get(index_name, []) or []
+
     docs = []
     for obj in items:
         text = obj.get(text_key, "") or ""
         meta = {k: v for k, v in obj.items() if k != text_key}
         if text.strip():
             docs.append(Document(page_content=text, metadata=meta))
+
     return docs
+
 
 
 # ---- For FAISS ----
