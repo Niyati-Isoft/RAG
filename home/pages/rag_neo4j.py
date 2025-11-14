@@ -301,15 +301,6 @@ def show_graph_for_question(driver, question: str, max_edges: int = 80):
     _render_pyvis_or_fallback(net, nodes_list, edges_list, height_px=580)
 # --- UPDATED: Query–Similarity–Entity graph -----------------------------------
 from collections import defaultdict
-def _safe_sim(sim) -> float:
-        """Coerce similarity to [0,1] float; fall back to 0 if bad."""
-        try:
-            v = float(sim)
-        except (TypeError, ValueError):
-            return 0.0
-        if math.isnan(v) or math.isinf(v):
-            return 0.0
-        return max(0.0, min(1.0, v))
 
 def show_query_semantic_graph(question: str,
                               rows: list,            # [(Document, sim_float), ...]
@@ -369,11 +360,9 @@ def show_query_semantic_graph(question: str,
                 nodes_list.append({"id": c_id, "label": f"Chunk {i}", "title": title, "color": "#90CAF9", "shape": "box"})
                 seen.add(("C", c_id))
 
-            sim_val = _safe_sim(sim)
-            width = max(1, int(1 + 7 * sim_val))
-            net.add_edge(q_id, c_id, label=f"sim={sim_val:.2f}", width=width)
-            edges_list.append({"from": q_id, "to": c_id, "label": f"sim={sim_val:.2f}", "width": width})
-
+            width = max(1, int(1 + 7*max(0.0, min(1.0, sim))))
+            net.add_edge(q_id, c_id, label=f"sim={sim:.2f}", width=width)
+            edges_list.append({"from": q_id, "to": c_id, "label": f"sim={sim:.2f}", "width": width})
 
     # 4) Entities as dots + weighted edges from Query (by best sim)
     for ent, best_sim in sorted(ent2bestsim.items(), key=lambda x: x[1], reverse=True):
@@ -382,11 +371,9 @@ def show_query_semantic_graph(question: str,
             net.add_node(e_id, label=ent, color="#43A047", shape="dot")
             nodes_list.append({"id": e_id, "label": ent, "color": "#43A047", "shape": "dot"})
             seen.add(("E", e_id))
-            sim_val = _safe_sim(best_sim)
-            width  = max(1, int(1 + 7 * sim_val))
-            net.add_edge(q_id, e_id, label=f"sim={sim_val:.2f}", width=width)
-            edges_list.append({"from": q_id, "to": e_id, "label": f"sim={sim_val:.2f}", "width": width})
-
+        width = max(1, int(1 + 7*max(0.0, min(1.0, best_sim))))
+        net.add_edge(q_id, e_id, label=f"sim={best_sim:.2f}", width=width)
+        edges_list.append({"from": q_id, "to": e_id, "label": f"sim={best_sim:.2f}", "width": width})
 
     # 5) (Optional) chunk→entity mention edges for provenance
     if show_chunks:
@@ -2028,8 +2015,7 @@ if retriever and q:
     st.subheader("🔗 Question–Similarity–Entity Graph")
     show_chunks_toggle = st.checkbox("Show chunk nodes", value=True, key="qse_show_chunks")
     kg_overlay = neo_driver if (KG_ENABLED and neo_driver) else None
-    import mat
-
+    
     show_query_semantic_graph(q, rows, neo_driver=kg_overlay,
                             max_entity_edges=st.session_state.get("KG_MAX_EDGES", 60),
                             show_chunks=show_chunks_toggle)
