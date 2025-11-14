@@ -1944,7 +1944,7 @@ if retriever and q:
 
     # ---------- Stage 1: RAG draft (vector context only) ----------
     RAG_TEMPLATE_DRAFT_HEALTH = """
-You are a retrieval-augmented assistant limited to general **health and nutrition education**.
+    You are a retrieval-augmented assistant limited to general **health and nutrition education**.
 
     Your job is to answer **only** using the text inside <context>. 
     Do NOT add outside knowledge or assumptions.
@@ -1967,7 +1967,7 @@ You are a retrieval-augmented assistant limited to general **health and nutritio
     """.strip()
 
     RAG_TEMPLATE_DRAFT_GENERAL = """
-You are a precise retrieval-augmented assistant.
+    You are a precise retrieval-augmented assistant.
 
     Your job is to answer **only** using the text inside <context>. 
     Do NOT add outside knowledge or assumptions.
@@ -2008,18 +2008,18 @@ You are a precise retrieval-augmented assistant.
     polished_answer = None
     if polish:
         POLISH_TEMPLATE = """
-You are editing the DRAFT_ANSWER for clarity and flow.
+            You are editing the DRAFT_ANSWER for clarity and flow.
 
-Rules:
-- Use ONLY the facts already present in DRAFT_ANSWER.
-- Do NOT introduce any new facts, numbers, or claims that are not in DRAFT_ANSWER.
-- Preserve any citations like [1], [2] that appear in the draft when appropriate.
-- Return ONLY the improved answer text. Do not include headings, explanations,
-  or the words "DRAFT", "Paraphrased Answer", or any meta-commentary.
+            Rules:
+            - Use ONLY the facts already present in DRAFT_ANSWER.
+            - Do NOT introduce any new facts, numbers, or claims that are not in DRAFT_ANSWER.
+            - Preserve any citations like [1], [2] that appear in the draft when appropriate.
+            - Return ONLY the improved answer text. Do not include headings, explanations,
+            or the words "DRAFT", "Paraphrased Answer", or any meta-commentary.
 
-DRAFT_ANSWER:
-{draft}
-""".strip()
+            DRAFT_ANSWER:
+            {draft}
+            """.strip()
 
         prompt_polish = PromptTemplate(
             template=POLISH_TEMPLATE,
