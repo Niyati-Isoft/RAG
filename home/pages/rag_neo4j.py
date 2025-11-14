@@ -1846,13 +1846,11 @@ def build_context(ret, question: str, max_chars: int = 8000):
     return format_docs_for_context(docs, max_chars=max_chars), docs
 
 
-
 # ---------- Run retrieval only if retriever and question exist ----------
 if retriever and q:
     from langchain_community.vectorstores import Weaviate as WeaviateVS
 
     # --------- Build the active retriever ---------
-    # Filter only if HEALTH; GENERAL uses all docs
     health_filter = {"topic": "health"} if effective_label == "health" else {}
 
     db = st.session_state.db
@@ -1878,7 +1876,8 @@ if retriever and q:
                 schema = vs._client.schema.get() if hasattr(vs, "_client") else vs.client.schema.get()
                 cls = next(
                     (c for c in schema.get("classes", [])
-                     if c.get("class") in [getattr(vs, "_index_name", None), getattr(vs, "index_name", None)]),
+                     if c.get("class") in [getattr(vs, "_index_name", None),
+                                           getattr(vs, "index_name", None)]),
                     None
                 )
                 existing = {p["name"] for p in (cls.get("properties", []) if cls else [])}
@@ -1931,105 +1930,104 @@ if retriever and q:
             st.json(meta)
         st.markdown("---")
 
-        # ---------- Build vector context (existing) ----------
-        ctx, docs = build_context(ret, q)
+    # ---------- Build vector context (once) ----------
+    ctx, docs = build_context(ret, q)
 
-        # (Optional) still compute graph_ctx ONLY for visualisations, not for answering
-        graph_ctx = ""
-        if KG_ENABLED and neo_driver:
-            try:
-                graph_ctx = kg_context_for_question(neo_driver, q, max_edges=KG_MAX_EDGES)
-            except Exception as e:
-                st.warning(f"KG retrieval skipped: {e}")
+    # (Optional) KG context only for graphs, not for answering
+    graph_ctx = ""
+    if KG_ENABLED and neo_driver:
+        try:
+            graph_ctx = kg_context_for_question(neo_driver, q, max_edges=KG_MAX_EDGES)
+        except Exception as e:
+            st.warning(f"KG retrieval skipped: {e}")
 
+    # ---------- Stage 1: RAG draft (vector context only) ----------
+    RAG_TEMPLATE_DRAFT_HEALTH = """
+You are a retrieval-augmented assistant limited to general **health and nutrition education**.
+Answer **only** using the retrieved context below.
+If there isn't enough information, say: "I don’t know from the provided context."
 
-        # ---------- Stage 1: RAG draft (use vector context only) ----------
-        RAG_TEMPLATE_DRAFT_HEALTH = """
-        You are a retrieval-augmented assistant limited to general **health and nutrition education**.
-        Answer **only** using the retrieved context below.
-        If there isn't enough information, say: "I don’t know from the provided context."
+<context>
+{context}
+</context>
 
-        <context>
-        {context}
-        </context>
+Question:
+{question}
 
-        Question:
-        {question}
+Write a clear, factual draft answer for a layperson using only this context.
+Include small in-text citations like [1], [2] based on the numbered chunks when helpful.
+If the user describes urgent or severe symptoms, add:
+"This information is educational and not a medical diagnosis. Please seek professional care."
+""".strip()
 
-        Write a clear, factual draft answer for a layperson using only this context.
-        Include small in-text citations like [1], [2] based on the numbered chunks when helpful.
-        If the user describes urgent or severe symptoms, add:
-        "This information is educational and not a medical diagnosis. Please seek professional care."
-        """.strip()
+    RAG_TEMPLATE_DRAFT_GENERAL = """
+You are a precise retrieval-augmented assistant.
+Answer **only** using the retrieved context below.
+If insufficient, say: "I don’t know from the provided context."
+When sources conflict, summarize each briefly.
 
-        RAG_TEMPLATE_DRAFT_GENERAL = """
-        You are a precise retrieval-augmented assistant.
-        Answer **only** using the retrieved context below.
-        If insufficient, say: "I don’t know from the provided context."
-        When sources conflict, summarize each briefly.
+<context>
+{context}
+</context>
 
-        <context>
-        {context}
-        </context>
+Question:
+{question}
 
-        Question:
-        {question}
+Write a short, factual draft answer using only this context.
+Include small in-text citations like [1], [2] based on the numbered chunks when helpful.
+""".strip()
 
-        Write a short, factual draft answer using only this context.
-        Include small in-text citations like [1], [2] based on the numbered chunks when helpful.
-        """.strip()
+    RAG_TEMPLATE_DRAFT = (
+        RAG_TEMPLATE_DRAFT_HEALTH if effective_label == "health"
+        else RAG_TEMPLATE_DRAFT_GENERAL
+    )
 
-        RAG_TEMPLATE_DRAFT = (
-            RAG_TEMPLATE_DRAFT_HEALTH if effective_label == "health"
-            else RAG_TEMPLATE_DRAFT_GENERAL
+    prompt_draft = PromptTemplate(
+        template=RAG_TEMPLATE_DRAFT,
+        input_variables=["question", "context"],
+    )
+
+    draft_answer = (prompt_draft | llm | StrOutputParser()).invoke({
+        "question": q,
+        "context": ctx,
+    })
+
+    # ---------- Stage 2: Polish (clarity only; no new facts) ----------
+    polished_answer = None
+    if polish:
+        POLISH_TEMPLATE = """
+You are editing the DRAFT_ANSWER for clarity and flow.
+
+Rules:
+- Use ONLY the facts already present in DRAFT_ANSWER.
+- Do NOT introduce any new facts, numbers, or claims that are not in DRAFT_ANSWER.
+- Preserve any citations like [1], [2] that appear in the draft when appropriate.
+- Return ONLY the improved answer text. Do not include headings, explanations,
+  or the words "DRAFT", "Paraphrased Answer", or any meta-commentary.
+
+DRAFT_ANSWER:
+{draft}
+""".strip()
+
+        prompt_polish = PromptTemplate(
+            template=POLISH_TEMPLATE,
+            input_variables=["draft"],
         )
 
-        prompt_draft = PromptTemplate(
-            template=RAG_TEMPLATE_DRAFT,
-            input_variables=["question", "context"],
-        )
+        polished_answer = (prompt_polish | llm | StrOutputParser()).invoke({
+            "draft": draft_answer
+        })
 
-        draft_answer = (
-            prompt_draft | llm | StrOutputParser()
-        ).invoke({"question": q, "context": ctx})
+    # ---- Show both draft and polished answers ----
+    st.subheader("Draft Answer")
+    st.write(draft_answer)
 
+    if polished_answer is not None:
+        st.subheader("Polished Answer")
+        st.write(polished_answer)
 
-        # ---------- Stage 2: Polish (clarity only; no new facts) ----------
-        if polish:
-            POLISH_TEMPLATE = """
-        You are editing the DRAFT_ANSWER for clarity and flow.
+    st.markdown("---")
 
-        Rules:
-        - Use ONLY the facts already present in DRAFT_ANSWER.
-        - Do NOT introduce any new facts, numbers, or claims that are not in DRAFT_ANSWER.
-        - Preserve any citations like [1], [2] that appear in the draft when appropriate.
-        - Return ONLY the improved answer text. Do not include headings, explanations,
-        or the words "DRAFT", "Paraphrased Answer", or any meta-commentary.
-
-        DRAFT_ANSWER:
-        {draft}
-        """.strip()
-
-            prompt_polish = PromptTemplate(
-                template=POLISH_TEMPLATE,
-                input_variables=["draft"],
-            )
-
-            polished_answer = (
-                prompt_polish | llm | StrOutputParser()
-            ).invoke({"draft": draft_answer})
-
-            # ---- Show both draft and polished answers ----
-            st.subheader("Draft Answer")
-            st.write(draft_answer)
-
-            st.subheader("Polished Answer")
-            st.write(polished_answer)
-        else:
-            st.subheader("Draft Answer")
-            st.write(draft_answer)
-
-        st.markdown("---")
 
 
 
