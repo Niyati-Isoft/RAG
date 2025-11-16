@@ -582,6 +582,229 @@ def show_chunk_entity_output_graph(
     _render_pyvis_or_fallback(net, nodes_list, edges_list, height_px=580)
 
 
+def show_chunk_entity_output_graph2(
+    question: str,
+    final_answer: str,
+    rows_with_answer_sim,
+    neo_driver=None,
+    max_entity_edges: int = 60,
+):
+    """
+    Graph:
+      - 🔎 Query node
+      - 🟡 Output node (final answer)
+      - 📦 Chunk nodes (C1, C2, C3…)
+      - 🟢 Entity nodes
+      - Edges:
+          Q → Chunk        (similarity to query)
+          Chunk → OP       (similarity to answer)
+          Chunk → Entity   (MENTIONS)
+          OP → Entity      (importance wrt answer; max sim_a over chunks mentioning it)
+          Entity ↔ Entity  (KG edges from Neo4j)
+    """
+    import streamlit as st
+
+    if not final_answer.strip() or not rows_with_answer_sim:
+        st.info("No provenance data to visualize.")
+        return
+
+    net = Network(
+        height="560px",
+        width="100%",
+        bgcolor="#FFFFFF",
+        font_color="#222",
+        notebook=False,
+    )
+    net.barnes_hut()
+
+    nodes_list, edges_list, seen = [], [], set()
+    canon = Canon()
+
+    # ---------- Nodes: Query + Output ----------
+    q_id = f"Q::{hash(question)}"
+    q_label = "🔎 " + (question[:60] + ("…" if len(question) > 60 else ""))
+    net.add_node(q_id, label=q_label, title=question, color="#FFB300", shape="ellipse")
+    nodes_list.append({
+        "id": q_id,
+        "label": q_label,
+        "title": question,
+        "color": "#FFB300",
+        "shape": "ellipse",
+    })
+    seen.add(("Q", q_id))
+
+    op_id = f"OP::{hash(final_answer)}"
+    op_label = "🟡 Output"
+    op_title = final_answer[:800] + ("…" if len(final_answer) > 800 else "")
+    net.add_node(op_id, label=op_label, title=op_title, color="#FFC107", shape="box")
+    nodes_list.append({
+        "id": op_id,
+        "label": op_label,
+        "title": op_title,
+        "color": "#FFC107",
+        "shape": "box",
+    })
+    seen.add(("OP", op_id))
+
+    # ---------- Chunks + entity extraction ----------
+    chunk_entities = defaultdict(set)
+    all_entities = set()
+    ent_best_ans_sim = defaultdict(float)   # NEW: best sim_a per entity
+
+    for (idx, doc, sim_q, sim_a) in rows_with_answer_sim:
+        text = getattr(doc, "page_content", "") or ""
+        meta = dict(getattr(doc, "metadata", {}) or {})
+
+        # --- chunk node ---
+        c_id = f"C::{idx}"
+        if ("C", c_id) not in seen:
+            cite = []
+            if "url" in meta:
+                cite.append(meta["url"])
+            if "source" in meta and "url" not in meta:
+                cite.append(Path(meta["source"]).name)
+            if "page" in meta:
+                cite.append(f"p.{meta['page']}")
+            if "slide" in meta:
+                cite.append(f"slide {meta['slide']}")
+            if "start_sec" in meta or "end_sec" in meta:
+                cite.append(f"{meta.get('start_sec','?')}–{meta.get('end_sec','?')}s")
+
+            title = text[:300] + ("…" if len(text) > 300 else "")
+            if cite:
+                title += "\n" + " • ".join(cite)
+
+            net.add_node(
+                c_id,
+                label=f"C{idx}",
+                title=title,
+                color="#90CAF9",
+                shape="box",
+            )
+            nodes_list.append({
+                "id": c_id,
+                "label": f"C{idx}",
+                "title": title,
+                "color": "#90CAF9",
+                "shape": "box",
+            })
+            seen.add(("C", c_id))
+
+        # --- edge: Query → Chunk ---
+        try:
+            sim_q_f = float(sim_q)
+        except Exception:
+            sim_q_f = 0.0
+        w_q = max(1, int(1 + 7 * max(0.0, min(1.0, sim_q_f))))
+        net.add_edge(q_id, c_id, label=f"q_sim={sim_q_f:.2f}", width=w_q)
+        edges_list.append({
+            "from": q_id,
+            "to": c_id,
+            "label": f"q_sim={sim_q_f:.2f}",
+            "width": w_q,
+        })
+
+        # --- edge: Chunk → OP ---
+        try:
+            sim_a_f = float(sim_a)
+        except Exception:
+            sim_a_f = 0.0
+        w_a = max(1, int(1 + 7 * max(0.0, min(1.0, sim_a_f))))
+        net.add_edge(c_id, op_id, label=f"a_sim={sim_a_f:.2f}", width=w_a)
+        edges_list.append({
+            "from": c_id,
+            "to": op_id,
+            "label": f"a_sim={sim_a_f:.2f}",
+            "width": w_a,
+        })
+
+        # --- entities in this chunk ---
+        ents_raw = extract_entities(text) or []
+        ents = {canon.canonical(e) for e in ents_raw if e and e.strip()}
+
+        for ent in ents:
+            all_entities.add(ent)
+            chunk_entities[c_id].add(ent)
+            # track best similarity to answer for this entity
+            if sim_a_f > ent_best_ans_sim[ent]:
+                ent_best_ans_sim[ent] = sim_a_f
+
+    # ---------- Entity nodes ----------
+    for ent in sorted(all_entities):
+        e_id = f"E::{ent}"
+        if ("E", e_id) not in seen:
+            net.add_node(e_id, label=ent, color="#43A047", shape="dot")
+            nodes_list.append({
+                "id": e_id,
+                "label": ent,
+                "color": "#43A047",
+                "shape": "dot",
+            })
+            seen.add(("E", e_id))
+
+    # ---------- Chunk–Entity edges ----------
+    for c_id, ents in chunk_entities.items():
+        for ent in ents:
+            e_id = f"E::{ent}"
+            net.add_edge(c_id, e_id, label="MENTIONS", color="#BDBDBD")
+            edges_list.append({
+                "from": c_id,
+                "to": e_id,
+                "label": "MENTIONS",
+                "color": "#BDBDBD",
+            })
+
+    # ---------- OP–Entity edges (this is what you asked for) ----------
+    for ent, best_sim in ent_best_ans_sim.items():
+        e_id = f"E::{ent}"
+        w_e = max(1, int(1 + 7 * max(0.0, min(1.0, float(best_sim)))))
+        net.add_edge(op_id, e_id, label=f"e_sim={best_sim:.2f}", width=w_e)
+        edges_list.append({
+            "from": op_id,
+            "to": e_id,
+            "label": f"e_sim={best_sim:.2f}",
+            "width": w_e,
+        })
+
+    # ---------- KG overlay: Entity–Entity ----------
+    if neo_driver and all_entities:
+        cypher = """
+        MATCH (e:Entity) WHERE e.name IN $ents
+        MATCH p=(e)-[r*1..2]-(n:Entity)
+        WITH p, r LIMIT $max
+        UNWIND r AS rel
+        WITH DISTINCT startNode(rel) AS s, rel, endNode(rel) AS t
+        RETURN s.name AS source, type(rel) AS rel_type, t.name AS target
+        """
+        try:
+            with neo_driver.session() as s:
+                data = s.run(cypher, ents=list(all_entities), max=max_entity_edges).data()
+            for row in data or []:
+                src, rel, tgt = row["source"], row["rel_type"], row["target"]
+                for lbl in (src, tgt):
+                    e_id = f"E::{lbl}"
+                    if ("E", e_id) not in seen:
+                        net.add_node(e_id, label=lbl, color="#43A047", shape="dot")
+                        nodes_list.append({
+                            "id": e_id,
+                            "label": lbl,
+                            "color": "#43A047",
+                            "shape": "dot",
+                        })
+                        seen.add(("E", e_id))
+                net.add_edge(f"E::{src}", f"E::{tgt}", label=rel, color="#9E9E9E")
+                edges_list.append({
+                    "from": f"E::{src}",
+                    "to": f"E::{tgt}",
+                    "label": rel,
+                    "color": "#9E9E9E",
+                })
+        except Exception as e:
+            st.warning(f"KG overlay skipped: {e}")
+
+    _render_pyvis_or_fallback(net, nodes_list, edges_list, height_px=580)
+
+
 @st.cache_resource(show_spinner=False)
 def get_router():
     return build_local_classifier("google/flan-t5-base")  # local, free
@@ -2234,5 +2457,12 @@ if retriever and q:
     max_entity_edges=st.session_state.get("KG_MAX_EDGES", 60),
              )
 
+    show_chunk_entity_output_graph2(
+    q,
+    final_answer,
+    rows_with_answer_sim,
+    neo_driver=provenance_neo,
+    max_entity_edges=st.session_state.get("KG_MAX_EDGES", 60),
+)
 
 
