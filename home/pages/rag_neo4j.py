@@ -360,10 +360,16 @@ def show_query_semantic_graph(question: str,
                 nodes_list.append({"id": c_id, "label": f"Chunk {i}", "title": title, "color": "#90CAF9", "shape": "box"})
                 seen.add(("C", c_id))
 
-            width = max(1, int(1 + 7*max(0.0, min(1.0, sim))))
-            net.add_edge(q_id, c_id, label=f"sim={sim:.2f}", width=width)
-            edges_list.append({"from": q_id, "to": c_id, "label": f"sim={sim:.2f}", "width": width})
+            # --- SAFE CASTING: converts "0.55" → 0.55 and skips bad values ---
+            try:
+                sim_val = float(sim)
+            except Exception:
+                sim_val = 0.0      # do NOT crash the graph
 
+            sim_val = max(0.0, min(1.0, sim_val))  # clamp
+            width = max(1, int(1 + 7 * sim_val))
+            net.add_edge(q_id, c_id, label=f"sim={sim_val:.2f}", width=width)
+            edges_list.append({"from": q_id, "to": c_id, "label": f"sim={sim_val:.2f}", "width": width})
     # 4) Entities as dots + weighted edges from Query (by best sim)
     for ent, best_sim in sorted(ent2bestsim.items(), key=lambda x: x[1], reverse=True):
         e_id = f"E::{ent}"
