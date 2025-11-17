@@ -726,44 +726,44 @@ def show_chunk_entity_output_graph2(
             "width": w_e,
         })
 
-    # ---------- KG overlay (entity ↔ entity) ----------
-    if neo_driver and all_entities:
-        cypher = """
-        MATCH (e:Entity) WHERE e.name IN $ents
-        MATCH p=(e)-[r*1..2]-(n:Entity)
-        WITH p, r LIMIT $max
-        UNWIND r AS rel
-        WITH DISTINCT startNode(rel) AS s, rel, endNode(rel) AS t
-        RETURN s.name AS source, type(rel) AS rel_type, t.name AS target
-        """
-        try:
-            with neo_driver.session() as s:
-                data = s.run(cypher, ents=list(all_entities), max=max_entity_edges).data()
+    # # ---------- KG overlay (entity ↔ entity) ----------
+    # if neo_driver and all_entities:
+    #     cypher = """
+    #     MATCH (e:Entity) WHERE e.name IN $ents
+    #     MATCH p=(e)-[r*1..2]-(n:Entity)
+    #     WITH p, r LIMIT $max
+    #     UNWIND r AS rel
+    #     WITH DISTINCT startNode(rel) AS s, rel, endNode(rel) AS t
+    #     RETURN s.name AS source, type(rel) AS rel_type, t.name AS target
+    #     """
+    #     try:
+    #         with neo_driver.session() as s:
+    #             data = s.run(cypher, ents=list(all_entities), max=max_entity_edges).data()
 
-            for row in data or []:
-                src, rel, tgt = row["source"], row["rel_type"], row["target"]
+    #         for row in data or []:
+    #             src, rel, tgt = row["source"], row["rel_type"], row["target"]
 
-                for lbl in (src, tgt):
-                    e_id = f"E::{lbl}"
-                    if ("E", e_id) not in seen:
-                        net.add_node(e_id, label=lbl, color="#43A047", shape="dot")
-                        nodes_list.append({
-                            "id": e_id,
-                            "label": lbl,
-                            "color": "#43A047",
-                            "shape": "dot",
-                        })
-                        seen.add(("E", e_id))
+    #             for lbl in (src, tgt):
+    #                 e_id = f"E::{lbl}"
+    #                 if ("E", e_id) not in seen:
+    #                     net.add_node(e_id, label=lbl, color="#43A047", shape="dot")
+    #                     nodes_list.append({
+    #                         "id": e_id,
+    #                         "label": lbl,
+    #                         "color": "#43A047",
+    #                         "shape": "dot",
+    #                     })
+    #                     seen.add(("E", e_id))
 
-                net.add_edge(f"E::{src}", f"E::{tgt}", label=rel, color="#9E9E9E")
-                edges_list.append({
-                    "from": f"E::{src}",
-                    "to": f"E::{tgt}",
-                    "label": rel,
-                    "color": "#9E9E9E",
-                })
-        except Exception as e:
-            st.warning(f"KG overlay skipped: {e}")
+    #             net.add_edge(f"E::{src}", f"E::{tgt}", label=rel, color="#9E9E9E")
+    #             edges_list.append({
+    #                 "from": f"E::{src}",
+    #                 "to": f"E::{tgt}",
+    #                 "label": rel,
+    #                 "color": "#9E9E9E",
+    #             })
+    #     except Exception as e:
+    #         st.warning(f"KG overlay skipped: {e}")
 
     # ---------- Render ----------
     _render_pyvis_or_fallback(net, nodes_list, edges_list, height_px=580)
