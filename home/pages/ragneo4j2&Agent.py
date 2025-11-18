@@ -242,17 +242,21 @@ def show_query_semantic_graph(question: str,
 
 # ---- Provenance graph color palette (non-yellow, higher contrast) ----
 GRAPH_COLORS = {
+    # Nodes
     "query":  "#1565C0",  # deep blue
-    "answer": "#5E35B1",  # purple
-    "output": "#5E35B1",  # same as answer
-    "chunk":  "#90CAF9",  # light blue
-    "entity": "#43A047",  # green
-    "edge_q_chunk": "#64B5F6",   # blue edge
-    "edge_chunk_ans": "#AB47BC", # purple/magenta edge
-    "edge_mentions": "#BDBDBD",  # light grey
-    "edge_kg": "#9E9E9E",        # mid grey
+    "answer": "#6A1B9A",  # purple (used for 'Answer' in other graph)
+    "output": "#6A1B9A",  # same purple for output node
+    "chunk":  "#42A5F5",  # light blue
+    "entity": "#2E7D32",  # green
+
+    # Edges
+    "edge_q_chunk":       "#64B5F6",  # blue: Query → Chunk
+    "edge_chunk_ans":     "#BA68C8",  # purple: Chunk → Answer
+    "edge_chunk_output":  "#BA68C8",  # purple: Chunk → Output
+    "edge_chunk_entity":  "#B0BEC5",  # soft grey: Chunk → Entity
+    "edge_output_entity": "#00897B",  # teal: Output → Entity
+    "edge_entity_entity": "#9E9E9E",  # grey: Entity ↔ Entity (KG)
 }
-# --- NEW: Answer-centric provenance graph ------------------------------------
 # --- NEW: Answer-centric provenance graph ------------------------------------
 def show_answer_provenance_graph(
     question: str,
