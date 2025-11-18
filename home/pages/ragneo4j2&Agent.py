@@ -245,7 +245,7 @@ GRAPH_COLORS = {
     # Nodes
     "query":  "#1565C0",  # deep blue
     "answer": "#D1AEE7",  # purple (used for 'Answer' in other graph)
-    "output": "#6A1B9A",  # same purple for output node
+    "output": "#7BFEFC",  # same purple for output node
     "chunk":  "#42A5F5",  # light blue
     "entity": "#2E7D32",  # green
 
