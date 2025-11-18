@@ -2202,8 +2202,30 @@ def build_context(ret, question: str, max_chars: int = 8000):
 
 
 # ---------- Run retrieval only if retriever and question exist ----------
-if retriever and q:
+# ---------- Run retrieval / answering ----------
+if not q.strip():
+    st.info("Type a question above to run retrieval.")
+elif retriever is None:
+    st.warning(
+        "No retriever/index is loaded. "
+        "Go to section **3) 🗂️ Vector DB** and click **Build index from current docs** "
+        "or **Load existing index** first."
+    )
+else:
     from langchain_community.vectorstores import Weaviate as WeaviateVS
+
+    # --------- Build the active retriever ---------
+    health_filter = {"topic": "health"} if effective_label == "health" else {}
+
+    db = st.session_state.db
+    if isinstance(db, FAISS):
+        ret = make_retriever(db, k, fetch_k, lambda_mult, filt=health_filter)
+    else:
+        # Weaviate path
+        ret = db.as_retriever(
+            search_type="similarity",
+            search_kwargs={"k": k, "filter": health_filter}
+        )
 
     # --------- Build the active retriever ---------
     health_filter = {"topic": "health"} if effective_label == "health" else {}
