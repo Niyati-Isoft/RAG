@@ -33,7 +33,7 @@ Definitions (be strict):
   • human or animal health, medicine, symptoms, diagnoses, treatments, side effects  
   • laboratory tests, blood reports, biomarkers, medical conditions  
   • nutrition, diet quality, macros/micros, calories, weight loss/gain, supplements  
-  • exercise or fitness in a health / body context
+  • exercise or fitness in a health / body context or etc something directly impacting health.
 
 - GENERAL = **everything else**, including:
   • prices, legal rules, regulations, labelling, marketing, packaging  
