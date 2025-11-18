@@ -253,7 +253,7 @@ GRAPH_COLORS = {
     "edge_q_chunk":       "#9BCDF6",  # blue: Query → Chunk
     "edge_chunk_ans":     "#ECCE8D",  # purple: Chunk → Answer
     "edge_chunk_output":  "#BA68C8",  # purple: Chunk → Output
-    "edge_chunk_entity":  "#AFF3A0",  # soft grey: Chunk → Entity
+    "edge_chunk_entity":  "#D86F6F",  # soft grey: Chunk → Entity
     "edge_output_entity": "#00897B",  # teal: Output → Entity
     "edge_entity_entity": "#9E9E9E",  # grey: Entity ↔ Entity (KG)
 }
