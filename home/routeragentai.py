@@ -23,25 +23,41 @@ Label = Literal["health", "general"]
 # -------------------------------------------------------------------
 
 _CLASSIFY_INSTR = """
-You are a router that must classify a user question into exactly one label:
-HEALTH or GENERAL.
+You are a strict binary classifier for user questions.
 
-Definitions:
-- HEALTH: questions about health, medicine, symptoms, diagnoses, lab values
-          (like hemoglobin, ferritin, HbA1c), nutrition, diet, supplements,
-          exercise, fitness, weight management, pregnancy-related health, etc.
-- GENERAL: all other questions not primarily about the user's physical health,
-           medical conditions, blood tests, treatments, or nutrition.
+Your task: decide whether the question is about **HEALTH** or **GENERAL** topics.
 
-Output format:
-- On the LAST line, write ONLY one word: HEALTH or GENERAL.
-- Do not add explanations, punctuation, or anything else after the label.
+Definitions (be strict):
+
+- HEALTH = questions primarily about:
+  • human or animal health, medicine, symptoms, diagnoses, treatments, side effects  
+  • laboratory tests, blood reports, biomarkers, medical conditions  
+  • nutrition, diet quality, macros/micros, calories, weight loss/gain, supplements  
+  • exercise or fitness in a health / body context
+
+- GENERAL = **everything else**, including:
+  • prices, legal rules, regulations, labelling, marketing, packaging  
+  • general food/product info not tied to health effects  
+  • technology, finance, education, travel, coding, etc.
+
+Special rules (important):
+
+1. If the question is SHORT or VAGUE (e.g. 1–3 generic words like
+   "hello", "general question"), classify it as GENERAL
+   unless it clearly contains medical/health/nutrition terms.
+2. Questions about food **labelling, packaging, marketing, or regulations**
+   should be GENERAL unless they explicitly ask about health impact
+   (e.g. “Is this healthy for me?”, “Is this safe for diabetics?”).
+3. When you are UNSURE, you MUST choose GENERAL. Do **not** guess HEALTH.
+4. Output **exactly one word** on the final line: either HEALTH or GENERAL,
+   with no punctuation or extra text.
 
 Question:
 {q}
 
 Label:
 """.strip()
+
 
 
 # -------------------------------------------------------------------
