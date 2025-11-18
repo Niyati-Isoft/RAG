@@ -239,6 +239,20 @@ def show_query_semantic_graph(question: str,
     if not question.strip() or not rows:
         st.info("No data to visualize yet.")
         return
+
+# ---- Provenance graph color palette (non-yellow, higher contrast) ----
+GRAPH_COLORS = {
+    "query":  "#1565C0",  # deep blue
+    "answer": "#5E35B1",  # purple
+    "output": "#5E35B1",  # same as answer
+    "chunk":  "#90CAF9",  # light blue
+    "entity": "#43A047",  # green
+    "edge_q_chunk": "#64B5F6",   # blue edge
+    "edge_chunk_ans": "#AB47BC", # purple/magenta edge
+    "edge_mentions": "#BDBDBD",  # light grey
+    "edge_kg": "#9E9E9E",        # mid grey
+}
+# --- NEW: Answer-centric provenance graph ------------------------------------
 # --- NEW: Answer-centric provenance graph ------------------------------------
 def show_answer_provenance_graph(
     question: str,
@@ -278,12 +292,18 @@ def show_answer_provenance_graph(
     # --- Query node ---
     q_id = f"Q::{hash(question)}"
     q_label = "🔎 " + (question[:60] + ("…" if len(question) > 60 else ""))
-    net.add_node(q_id, label=q_label, title=question, color="#FFB300", shape="ellipse")
+    net.add_node(
+        q_id,
+        label=q_label,
+        title=question,
+        color=GRAPH_COLORS["query"],
+        shape="ellipse",
+    )
     nodes_list.append({
         "id": q_id,
         "label": q_label,
         "title": question,
-        "color": "#FFB300",
+        "color": GRAPH_COLORS["query"],
         "shape": "ellipse",
     })
     seen.add(("Q", q_id))
@@ -292,12 +312,18 @@ def show_answer_provenance_graph(
     a_id = f"A::{hash(polished_answer)}"
     a_label = "🟡 Answer"
     ans_title = polished_answer[:800] + ("…" if len(polished_answer) > 800 else "")
-    net.add_node(a_id, label=a_label, title=ans_title, color="#FFC107", shape="box")
+    net.add_node(
+        a_id,
+        label=a_label,
+        title=ans_title,
+        color=GRAPH_COLORS["answer"],
+        shape="box",
+    )
     nodes_list.append({
         "id": a_id,
         "label": a_label,
         "title": ans_title,
-        "color": "#FFC107",
+        "color": GRAPH_COLORS["answer"],
         "shape": "box",
     })
     seen.add(("A", a_id))
@@ -321,7 +347,7 @@ def show_answer_provenance_graph(
             if "start_sec" in meta or "end_sec" in meta:
                 cite.append(f"{meta.get('start_sec','?')}–{meta.get('end_sec','?')}s")
 
-            title = (text[:300] + ("…" if len(text) > 300 else ""))
+            title = text[:300] + ("…" if len(text) > 300 else "")
             if cite:
                 title += "\n" + " • ".join(cite)
 
@@ -329,14 +355,14 @@ def show_answer_provenance_graph(
                 c_id,
                 label=f"Chunk {idx}",
                 title=title,
-                color="#90CAF9",
+                color=GRAPH_COLORS["chunk"],
                 shape="box",
             )
             nodes_list.append({
                 "id": c_id,
                 "label": f"Chunk {idx}",
                 "title": title,
-                "color": "#90CAF9",
+                "color": GRAPH_COLORS["chunk"],
                 "shape": "box",
             })
             seen.add(("C", c_id))
@@ -347,12 +373,20 @@ def show_answer_provenance_graph(
         except Exception:
             sim_q_f = 0.0
         w_q = max(1, int(1 + 7 * max(0.0, min(1.0, sim_q_f))))
-        net.add_edge(q_id, c_id, label=f"q_sim={sim_q_f:.2f}", width=w_q)
+
+        net.add_edge(
+            q_id,
+            c_id,
+            label=f"q_sim={sim_q_f:.2f}",
+            width=w_q,
+            color=GRAPH_COLORS["edge_q_chunk"],
+        )
         edges_list.append({
             "from": q_id,
             "to": c_id,
             "label": f"q_sim={sim_q_f:.2f}",
             "width": w_q,
+            "color": GRAPH_COLORS["edge_q_chunk"],
         })
 
         # Edge: Chunk → Answer (sim_a)
@@ -361,12 +395,20 @@ def show_answer_provenance_graph(
         except Exception:
             sim_a_f = 0.0
         w_a = max(1, int(1 + 7 * max(0.0, min(1.0, sim_a_f))))
-        net.add_edge(c_id, a_id, label=f"a_sim={sim_a_f:.2f}", width=w_a)
+
+        net.add_edge(
+            c_id,
+            a_id,
+            label=f"a_sim={sim_a_f:.2f}",
+            width=w_a,
+            color=GRAPH_COLORS["edge_chunk_ans"],
+        )
         edges_list.append({
             "from": c_id,
             "to": a_id,
             "label": f"a_sim={sim_a_f:.2f}",
             "width": w_a,
+            "color": GRAPH_COLORS["edge_chunk_ans"],
         })
 
     # For now we skip entities; they can be added later if you want:
@@ -375,6 +417,7 @@ def show_answer_provenance_graph(
     #   - optionally use neo_driver for KG edges
 
     _render_pyvis_or_fallback(net, nodes_list, edges_list, height_px=580)
+
 
 def show_chunk_entity_output_graph(
     question: str,
@@ -416,12 +459,18 @@ def show_chunk_entity_output_graph(
     # ---------- Nodes: Query + Output ----------
     q_id = f"Q::{hash(question)}"
     q_label = "🔎 " + (question[:60] + ("…" if len(question) > 60 else ""))
-    net.add_node(q_id, label=q_label, title=question, color="#FFB300", shape="ellipse")
+    net.add_node(
+        q_id,
+        label=q_label,
+        title=question,
+        color=GRAPH_COLORS["query"],
+        shape="ellipse",
+    )
     nodes_list.append({
         "id": q_id,
         "label": q_label,
         "title": question,
-        "color": "#FFB300",
+        "color": GRAPH_COLORS["query"],
         "shape": "ellipse",
     })
     seen.add(("Q", q_id))
@@ -429,18 +478,23 @@ def show_chunk_entity_output_graph(
     op_id = f"OP::{hash(final_answer)}"
     op_label = "🟡 Output"
     op_title = final_answer[:800] + ("…" if len(final_answer) > 800 else "")
-    net.add_node(op_id, label=op_label, title=op_title, color="#FFC107", shape="box")
+    net.add_node(
+        op_id,
+        label=op_label,
+        title=op_title,
+        color=GRAPH_COLORS["output"],
+        shape="box",
+    )
     nodes_list.append({
         "id": op_id,
         "label": op_label,
         "title": op_title,
-        "color": "#FFC107",
+        "color": GRAPH_COLORS["output"],
         "shape": "box",
     })
     seen.add(("OP", op_id))
 
     # ---------- Chunks + entity extraction ----------
-    # track which entities belong to which chunks
     chunk_entities = defaultdict(set)
     all_entities = set()
 
@@ -471,14 +525,14 @@ def show_chunk_entity_output_graph(
                 c_id,
                 label=f"C{idx}",
                 title=title,
-                color="#90CAF9",
+                color=GRAPH_COLORS["chunk"],
                 shape="box",
             )
             nodes_list.append({
                 "id": c_id,
                 "label": f"C{idx}",
                 "title": title,
-                "color": "#90CAF9",
+                "color": GRAPH_COLORS["chunk"],
                 "shape": "box",
             })
             seen.add(("C", c_id))
@@ -489,12 +543,20 @@ def show_chunk_entity_output_graph(
         except Exception:
             sim_q_f = 0.0
         w_q = max(1, int(1 + 7 * max(0.0, min(1.0, sim_q_f))))
-        net.add_edge(q_id, c_id, label=f"q_sim={sim_q_f:.2f}", width=w_q)
+
+        net.add_edge(
+            q_id,
+            c_id,
+            label=f"q_sim={sim_q_f:.2f}",
+            width=w_q,
+            color=GRAPH_COLORS["edge_q_chunk"],
+        )
         edges_list.append({
             "from": q_id,
             "to": c_id,
             "label": f"q_sim={sim_q_f:.2f}",
             "width": w_q,
+            "color": GRAPH_COLORS["edge_q_chunk"],
         })
 
         # --- edge: Chunk → Output (similarity to answer) ---
@@ -503,12 +565,20 @@ def show_chunk_entity_output_graph(
         except Exception:
             sim_a_f = 0.0
         w_a = max(1, int(1 + 7 * max(0.0, min(1.0, sim_a_f))))
-        net.add_edge(c_id, op_id, label=f"a_sim={sim_a_f:.2f}", width=w_a)
+
+        net.add_edge(
+            c_id,
+            op_id,
+            label=f"a_sim={sim_a_f:.2f}",
+            width=w_a,
+            color=GRAPH_COLORS["edge_chunk_output"],
+        )
         edges_list.append({
             "from": c_id,
             "to": op_id,
             "label": f"a_sim={sim_a_f:.2f}",
             "width": w_a,
+            "color": GRAPH_COLORS["edge_chunk_output"],
         })
 
         # --- entities in this chunk ---
@@ -523,11 +593,16 @@ def show_chunk_entity_output_graph(
     for ent in sorted(all_entities):
         e_id = f"E::{ent}"
         if ("E", e_id) not in seen:
-            net.add_node(e_id, label=ent, color="#43A047", shape="dot")
+            net.add_node(
+                e_id,
+                label=ent,
+                color=GRAPH_COLORS["entity"],
+                shape="dot",
+            )
             nodes_list.append({
                 "id": e_id,
                 "label": ent,
-                "color": "#43A047",
+                "color": GRAPH_COLORS["entity"],
                 "shape": "dot",
             })
             seen.add(("E", e_id))
@@ -535,12 +610,17 @@ def show_chunk_entity_output_graph(
     for c_id, ents in chunk_entities.items():
         for ent in ents:
             e_id = f"E::{ent}"
-            net.add_edge(c_id, e_id, label="MENTIONS", color="#BDBDBD")
+            net.add_edge(
+                c_id,
+                e_id,
+                label="MENTIONS",
+                color=GRAPH_COLORS["edge_chunk_entity"],
+            )
             edges_list.append({
                 "from": c_id,
                 "to": e_id,
                 "label": "MENTIONS",
-                "color": "#BDBDBD",
+                "color": GRAPH_COLORS["edge_chunk_entity"],
             })
 
     # ---------- KG overlay: Entity–Entity edges ----------
@@ -561,27 +641,36 @@ def show_chunk_entity_output_graph(
                 for lbl in (src, tgt):
                     e_id = f"E::{lbl}"
                     if ("E", e_id) not in seen:
-                        net.add_node(e_id, label=lbl, color="#43A047", shape="dot")
+                        net.add_node(
+                            e_id,
+                            label=lbl,
+                            color=GRAPH_COLORS["entity"],
+                            shape="dot",
+                        )
                         nodes_list.append({
                             "id": e_id,
                             "label": lbl,
-                            "color": "#43A047",
+                            "color": GRAPH_COLORS["entity"],
                             "shape": "dot",
                         })
                         seen.add(("E", e_id))
-                net.add_edge(f"E::{src}", f"E::{tgt}", label=rel, color="#9E9E9E")
+                net.add_edge(
+                    f"E::{src}",
+                    f"E::{tgt}",
+                    label=rel,
+                    color=GRAPH_COLORS["edge_entity_entity"],
+                )
                 edges_list.append({
                     "from": f"E::{src}",
                     "to": f"E::{tgt}",
                     "label": rel,
-                    "color": "#9E9E9E",
+                    "color": GRAPH_COLORS["edge_entity_entity"],
                 })
         except Exception as e:
             st.warning(f"KG overlay skipped: {e}")
 
     # ---------- Render ----------
     _render_pyvis_or_fallback(net, nodes_list, edges_list, height_px=580)
-
 
 def show_chunk_entity_output_graph2(
     final_answer: str,
@@ -622,12 +711,18 @@ def show_chunk_entity_output_graph2(
     op_id = f"OP::{hash(final_answer)}"
     op_label = "🟡 Output"
     op_title = final_answer[:800] + ("…" if len(final_answer) > 800 else "")
-    net.add_node(op_id, label=op_label, title=op_title, color="#FFC107", shape="box")
+    net.add_node(
+        op_id,
+        label=op_label,
+        title=op_title,
+        color=GRAPH_COLORS["output"],
+        shape="box",
+    )
     nodes_list.append({
         "id": op_id,
         "label": op_label,
         "title": op_title,
-        "color": "#FFC107",
+        "color": GRAPH_COLORS["output"],
         "shape": "box",
     })
     seen.add(("OP", op_id))
@@ -641,26 +736,37 @@ def show_chunk_entity_output_graph2(
         text = getattr(doc, "page_content", "") or ""
         meta = dict(getattr(doc, "metadata", {}) or {})
 
-        # Create chunk
+        # Create chunk node
         c_id = f"C::{idx}"
         if ("C", c_id) not in seen:
             cite = []
-            if "url" in meta: cite.append(meta["url"])
-            if "source" in meta and "url" not in meta: cite.append(Path(meta["source"]).name)
-            if "page" in meta: cite.append(f"p.{meta['page']}")
-            if "slide" in meta: cite.append(f"slide {meta['slide']}")
+            if "url" in meta:
+                cite.append(meta["url"])
+            if "source" in meta and "url" not in meta:
+                cite.append(Path(meta["source"]).name)
+            if "page" in meta:
+                cite.append(f"p.{meta['page']}")
+            if "slide" in meta:
+                cite.append(f"slide {meta['slide']}")
             if "start_sec" in meta or "end_sec" in meta:
                 cite.append(f"{meta.get('start_sec','?')}–{meta.get('end_sec','?')}s")
 
             title = text[:300] + ("…" if len(text) > 300 else "")
-            if cite: title += "\n" + " • ".join(cite)
+            if cite:
+                title += "\n" + " • ".join(cite)
 
-            net.add_node(c_id, label=f"C{idx}", title=title, color="#90CAF9", shape="box")
+            net.add_node(
+                c_id,
+                label=f"C{idx}",
+                title=title,
+                color=GRAPH_COLORS["chunk"],
+                shape="box",
+            )
             nodes_list.append({
                 "id": c_id,
                 "label": f"C{idx}",
                 "title": title,
-                "color": "#90CAF9",
+                "color": GRAPH_COLORS["chunk"],
                 "shape": "box",
             })
             seen.add(("C", c_id))
@@ -672,12 +778,19 @@ def show_chunk_entity_output_graph2(
             sim_a_f = 0.0
 
         w_a = max(1, int(1 + 7 * max(0.0, min(1.0, sim_a_f))))
-        net.add_edge(c_id, op_id, label=f"a_sim={sim_a_f:.2f}", width=w_a)
+        net.add_edge(
+            c_id,
+            op_id,
+            label=f"a_sim={sim_a_f:.2f}",
+            width=w_a,
+            color=GRAPH_COLORS["edge_chunk_output"],
+        )
         edges_list.append({
             "from": c_id,
             "to": op_id,
             "label": f"a_sim={sim_a_f:.2f}",
             "width": w_a,
+            "color": GRAPH_COLORS["edge_chunk_output"],
         })
 
         # Extract entities from chunk
@@ -694,11 +807,16 @@ def show_chunk_entity_output_graph2(
     for ent in sorted(all_entities):
         e_id = f"E::{ent}"
         if ("E", e_id) not in seen:
-            net.add_node(e_id, label=ent, color="#43A047", shape="dot")
+            net.add_node(
+                e_id,
+                label=ent,
+                color=GRAPH_COLORS["entity"],
+                shape="dot",
+            )
             nodes_list.append({
                 "id": e_id,
                 "label": ent,
-                "color": "#43A047",
+                "color": GRAPH_COLORS["entity"],
                 "shape": "dot",
             })
             seen.add(("E", e_id))
@@ -707,25 +825,45 @@ def show_chunk_entity_output_graph2(
     for c_id, ents in chunk_entities.items():
         for ent in ents:
             e_id = f"E::{ent}"
-            net.add_edge(c_id, e_id, label="MENTIONS", color="#BDBDBD")
+            net.add_edge(
+                c_id,
+                e_id,
+                label="MENTIONS",
+                color=GRAPH_COLORS["edge_chunk_entity"],
+            )
             edges_list.append({
                 "from": c_id,
                 "to": e_id,
                 "label": "MENTIONS",
-                "color": "#BDBDBD",
+                "color": GRAPH_COLORS["edge_chunk_entity"],
             })
 
     # ---------- Output → Entity edges ----------
     for ent, best_sim in ent_best_ans_sim.items():
         e_id = f"E::{ent}"
         w_e = max(1, int(1 + 7 * max(0.0, min(1.0, float(best_sim)))))
-        net.add_edge(op_id, e_id, label=f"e_sim={best_sim:.2f}", width=w_e)
+        net.add_edge(
+            op_id,
+            e_id,
+            label=f"e_sim={best_sim:.2f}",
+            width=w_e,
+            color=GRAPH_COLORS["edge_output_entity"],
+        )
         edges_list.append({
             "from": op_id,
             "to": e_id,
             "label": f"e_sim={best_sim:.2f}",
             "width": w_e,
+            "color": GRAPH_COLORS["edge_output_entity"],
         })
+
+    # (KG overlay is commented out by design in this version)
+
+    # ---------- Render ----------
+    _render_pyvis_or_fallback(net, nodes_list, edges_list, height_px=580)
+
+
+
 
     # # ---------- KG overlay (entity ↔ entity) ----------
     # if neo_driver and all_entities:
@@ -766,8 +904,7 @@ def show_chunk_entity_output_graph2(
     #     except Exception as e:
     #         st.warning(f"KG overlay skipped: {e}")
 
-    # ---------- Render ----------
-    _render_pyvis_or_fallback(net, nodes_list, edges_list, height_px=580)
+
 
 
 
