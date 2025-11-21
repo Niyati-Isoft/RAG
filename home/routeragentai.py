@@ -116,6 +116,75 @@ def classify_question_llm(
     # Ambiguous → safe default
     return "general", dbg
 
+def classify_question_cloud_openai(q: str, client) -> tuple[Label, Dict[str, Any]]:
+    """
+    Classification using OpenAI model (e.g., gpt-4o-mini).
+    """
+    dbg = {}
+
+    if not q:
+        return "general", dbg
+
+    prompt = _CLASSIFY_INSTR.format(q=q)
+
+    try:
+        resp = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "You are a strict classifier."},
+                {"role": "user", "content": prompt},
+            ],
+            max_tokens=5,
+            temperature=0,
+        )
+        out = resp.choices[0].message.content.strip()
+    except Exception as e:
+        dbg["error"] = str(e)
+        return "general", dbg
+
+    dbg["openai_raw"] = out
+    up = out.upper()
+
+    if "HEALTH" in up and "GENERAL" not in up:
+        return "health", dbg
+    if "GENERAL" in up and "HEALTH" not in up:
+        return "general", dbg
+
+    return "general", dbg
+def classify_question_cloud_claude(q: str, client) -> tuple[Label, Dict[str, Any]]:
+    """
+    Classification using Claude Sonnet 3.5.
+    """
+    dbg = {}
+
+    if not q:
+        return "general", dbg
+
+    prompt = _CLASSIFY_INSTR.format(q=q)
+
+    try:
+        resp = client.messages.create(
+            model="claude-3-sonnet-20240229",
+            max_tokens=5,
+            temperature=0,
+            messages=[
+                {"role": "user", "content": prompt}
+            ]
+        )
+        out = resp.content[0].text.strip()
+    except Exception as e:
+        dbg["error"] = str(e)
+        return "general", dbg
+
+    dbg["claude_raw"] = out
+    up = out.upper()
+
+    if "HEALTH" in up and "GENERAL" not in up:
+        return "health", dbg
+    if "GENERAL" in up and "HEALTH" not in up:
+        return "general", dbg
+
+    return "general", dbg
 
 # -------------------------------------------------------------------
 # 3. LangGraph state definition

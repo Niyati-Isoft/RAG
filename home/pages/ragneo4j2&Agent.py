@@ -34,7 +34,7 @@ from anthropic import Anthropic
 ROOT_DIR = os.path.dirname(os.path.dirname(__file__))  # one level up from pages/
 if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
-from routeragentai import build_local_classifier, classify_question_llm as classify_question
+from routeragentai import build_local_classifier, classify_question_llm as classify_question,classify_question_cloud_openai, classify_question_cloud_claude
 
 # ==== KG imports (NEW) ====
 from kg_extract import extract_entities, extract_triples_rules
@@ -879,10 +879,27 @@ def show_chunk_entity_output_graph2(
 
 
 @st.cache_resource(show_spinner=False)
-def get_router():
-    return build_local_classifier("google/flan-t5-base")  # local, free
+def get_router(active_llm, client_openai=None, client_claude=None):
+    """
+    Returns:
+      - cloud classifier (openai/claude) if selected + key available
+      - FLAN classifier otherwise
+    """
+    if active_llm == "openai" and client_openai:
+        return ("openai", client_openai)
 
-router = get_router()
+    if active_llm == "claude" and client_claude:
+        return ("claude", client_claude)
+
+    # fallback → FLAN-T5
+    return ("flan", build_local_classifier("google/flan-t5-base"))
+
+
+router_kind, router_obj = get_router(
+    ACTIVE_LLM,
+    client_openai=client_openai,
+    client_claude=client_claude
+)
 
 # ---- Optional deps that may not exist everywhere ----
 def _optional_import(name, alias=None):
@@ -2332,7 +2349,15 @@ if st.button("🔁 Refresh KG cache"):
 st.header("4) 🔎 Retrieve & 💬 Ask")
 q = st.text_input("Your question", value="High protein meal ideas")
 # ---- Route the query with the router agent ----
-label, debug_info = classify_question(q or "", clf_pipe=router)
+if router_kind == "openai":
+    label, debug_info = classify_question_cloud_openai(q, router_obj)
+
+elif router_kind == "claude":
+    label, debug_info = classify_question_cloud_claude(q, router_obj)
+
+else:
+    label, debug_info = classify_question_llm(q, clf_pipe=router_obj)
+
 st.caption(f"🧭 Router decision: **{label.upper()}**")
 with st.expander("Router debug", expanded=False):
     st.json(debug_info)
