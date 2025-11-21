@@ -955,7 +955,6 @@ st.set_page_config(page_title="Multimedia Token-based RAG", layout="wide")
 st.title("🎛️ Multimedia Token-based RAG")
 
 with st.sidebar:
-    with st.sidebar:
     st.markdown("### 🔑 LLM Configuration")
     st.markdown("---")
 
