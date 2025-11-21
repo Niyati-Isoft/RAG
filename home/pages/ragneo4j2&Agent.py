@@ -936,7 +936,7 @@ with st.sidebar:
 
     # Connection status
     st.success("🟢 OpenAI key loaded") if client_openai else st.error("🔴 No OpenAI key found")
-    st.success("🟢 Claude key loaded") if client_claude else st.info("🟡 Claude not configured")
+    st.success("🟢 Claude key loaded") if client_claude else st.error("🟡 Claude not configured")
 
     st.markdown("---")
 
