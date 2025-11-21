@@ -961,9 +961,16 @@ with st.sidebar:
     client_openai  = OpenAI(api_key=OPENAI_KEY) if OPENAI_KEY else None
     client_claude = Anthropic(api_key=CLAUDE_KEY) if CLAUDE_KEY else None
 
-    # Connection status
-    st.success("🟢 OpenAI key loaded") if client_openai else st.error("🔴 No OpenAI key found")
-    st.success("🟢 Claude key loaded") if client_claude else st.error("🟡 Claude not configured")
+    if client_openai:
+        st.success("🟢 OpenAI key loaded")
+    else:
+        st.error("🔴 No OpenAI key found")
+
+    if client_claude:
+        st.success("🟢 Claude key loaded")
+    else:
+        st.error("🟡 Claude not configured")
+
 
     st.markdown("---")
 
