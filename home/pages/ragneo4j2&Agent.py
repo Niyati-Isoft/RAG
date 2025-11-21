@@ -1010,7 +1010,6 @@ with st.sidebar:
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     INDEX_DIR.mkdir(parents=True, exist_ok=True)
 
-    
 
     st.markdown("**Chunking (tokens)**")
     CHUNK_SIZE_TOKENS   = st.number_input("Chunk size (tokens)", 50, 1000, 200, 10)
