@@ -1024,8 +1024,8 @@ with st.sidebar:
         index=0,  # Default = OpenAI
     )
 
-    # Try to load OpenAI client (cached)
-    client_openai = get_openai_client()
+    OPENAI_KEY = st.secrets.get("openai", {}).get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
+    client_openai = OpenAI(api_key=OPENAI_KEY) if OPENAI_KEY else None
 
     # Decide whether to use OpenAI model
     use_openai_model = (ANSWER_ENGINE.startswith("OpenAI") and client_openai is not None)
