@@ -28,6 +28,7 @@ from langchain_community.vectorstores.utils import DistanceStrategy
 import sys, os
 import json
 import streamlit.components.v1 as components  # keep one import
+from openai import OpenAI
 
 # Ensure Streamlit can find the root directory (where routerAgent.py lives)
 ROOT_DIR = os.path.dirname(os.path.dirname(__file__))  # one level up from pages/
@@ -957,6 +958,9 @@ st.set_page_config(page_title="Multimedia Token-based RAG", layout="wide")
 st.title("🎛️ Multimedia Token-based RAG")
 
 with st.sidebar:
+    st.markdown("### 🔑 OpenAI API")
+    OPENAI_KEY = OPENAI_KEY = st.secrets["openai"]["api_key"]
+
     st.markdown("**Vector DB Backend**")
     BACKEND = st.selectbox("Choose vector store", ["FAISS (local folder)", "Weaviate (remote)"], index=1)
 
@@ -1000,7 +1004,7 @@ with st.sidebar:
     NEO_PWD  = st.secrets.get("NEO4J_PASSWORD", "")
     KG_MAX_EDGES = st.slider("KG edges limit (retrieval)", 10, 200, 60, 10)
     st.session_state["KG_MAX_EDGES"] = KG_MAX_EDGES
-
+   
 
 METADATA_KEYS = [
     "doc_id", "chunk_id",
@@ -1013,7 +1017,11 @@ METADATA_KEYS = [
 "source_domain" # ← new
 ]
 
-
+# ========================= Clients =========================
+if OPENAI_KEY:
+    client_openai = OpenAI(api_key=OPENAI_KEY)
+else:
+    client_openai = None
 
 # ========================= Caches / Singletons =========================
 
@@ -2510,11 +2518,24 @@ else:
         template=RAG_TEMPLATE_DRAFT,
         input_variables=["question", "context"],
     )
+    if client_openai:
+    # 🔷 USE OPENAI COMPLETION
+            draft_answer = client_openai.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": "You are a strict retrieval-only RAG assistant."},
+                    {"role": "user", "content": prompt_draft.format(
+                        question=q,
+                        context=ctx
+                    )}
+                ]
+            ).choices[0].message["content"]
 
-    draft_answer = (prompt_draft | llm | StrOutputParser()).invoke({
-        "question": q,
-        "context": ctx,
-    })
+    else:
+            draft_answer = (prompt_draft | llm | StrOutputParser()).invoke({
+                "question": q,
+                "context": ctx,
+            })
 
     # ---------- Stage 2: Polish (clarity only; no new facts) ----------
     polished_answer = None
@@ -2538,9 +2559,18 @@ else:
             input_variables=["draft"],
         )
 
-        polished_answer = (prompt_polish | llm | StrOutputParser()).invoke({
-            "draft": draft_answer
-        })
+        if client_openai:
+            polished_answer = client_openai.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": "Rewrite only for clarity. Do NOT add facts."},
+                    {"role": "user", "content": POLISH_TEMPLATE.format(draft=draft_answer)},
+                ],
+            ).choices[0].message["content"]
+        else:
+            polished_answer = (prompt_polish | llm | StrOutputParser()).invoke({
+                "draft": draft_answer
+            })
 
     st.subheader("Draft Answer")
     st.write(draft_answer)
