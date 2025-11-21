@@ -29,7 +29,7 @@ import sys, os
 import json
 import streamlit.components.v1 as components  # keep one import
 from openai import OpenAI
-
+from anthropic import Anthropic
 # Ensure Streamlit can find the root directory (where routerAgent.py lives)
 ROOT_DIR = os.path.dirname(os.path.dirname(__file__))  # one level up from pages/
 if ROOT_DIR not in sys.path:
@@ -111,7 +111,6 @@ with st.expander("Neo4j connection status", expanded=False):
 
 ###
 
-from openai import OpenAI
 
 OPENAI_KEY = st.secrets.get("openai", {}).get("OPENAI_API_KEY")
 CLAUDE_KEY = st.secrets.get("anthropic", {}).get("ANTHROPIC_API_KEY")
