@@ -1071,20 +1071,20 @@ METADATA_KEYS = [
 # ========================= Caches / Singletons =========================
 
 @st.cache_resource(show_spinner=False)
-def get_router(ACTIVE_LLM, client_openai=None, client_claude=None):
+def get_router(_ACTIVE_LLM, _client_openai=None, _client_claude=None):
     """
-    Returns:
-      - cloud classifier (openai/claude) if selected + key available
-      - FLAN classifier otherwise
+    Build router according to active LLM (openai / claude / local).
+    Underscore prefix prevents Streamlit from hashing these objects.
     """
-    if ACTIVE_LLM == "openai" and client_openai:
-        return ("openai", client_openai)
+    if _ACTIVE_LLM == "openai" and _client_openai:
+        return ("openai", _client_openai)
 
-    if ACTIVE_LLM == "claude" and client_claude:
-        return ("claude", client_claude)
+    elif _ACTIVE_LLM == "claude" and _client_claude:
+        return ("claude", _client_claude)
 
-    # fallback → FLAN-T5
+    # default → local flan-t5
     return ("flan", build_local_classifier("google/flan-t5-base"))
+
 
 
 router_kind, router_obj = get_router(
