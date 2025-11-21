@@ -139,6 +139,13 @@ def get_openai_client():
 
 client_openai = get_openai_client()
 
+from anthropic import Anthropic
+
+
+# load key
+ANTHROPIC_KEY = st.secrets.get("anthropic", {}).get("api_key")
+
+client_claude = Anthropic(api_key=ANTHROPIC_KEY) if ANTHROPIC_KEY else None
 
 
 # ── Reusable KG readers ────────────────────────────────────────────────────────
@@ -897,44 +904,7 @@ def show_chunk_entity_output_graph2(
 
 
 
-    # # ---------- KG overlay (entity ↔ entity) ----------
-    # if neo_driver and all_entities:
-    #     cypher = """
-    #     MATCH (e:Entity) WHERE e.name IN $ents
-    #     MATCH p=(e)-[r*1..2]-(n:Entity)
-    #     WITH p, r LIMIT $max
-    #     UNWIND r AS rel
-    #     WITH DISTINCT startNode(rel) AS s, rel, endNode(rel) AS t
-    #     RETURN s.name AS source, type(rel) AS rel_type, t.name AS target
-    #     """
-    #     try:
-    #         with neo_driver.session() as s:
-    #             data = s.run(cypher, ents=list(all_entities), max=max_entity_edges).data()
 
-    #         for row in data or []:
-    #             src, rel, tgt = row["source"], row["rel_type"], row["target"]
-
-    #             for lbl in (src, tgt):
-    #                 e_id = f"E::{lbl}"
-    #                 if ("E", e_id) not in seen:
-    #                     net.add_node(e_id, label=lbl, color="#43A047", shape="dot")
-    #                     nodes_list.append({
-    #                         "id": e_id,
-    #                         "label": lbl,
-    #                         "color": "#43A047",
-    #                         "shape": "dot",
-    #                     })
-    #                     seen.add(("E", e_id))
-
-    #             net.add_edge(f"E::{src}", f"E::{tgt}", label=rel, color="#9E9E9E")
-    #             edges_list.append({
-    #                 "from": f"E::{src}",
-    #                 "to": f"E::{tgt}",
-    #                 "label": rel,
-    #                 "color": "#9E9E9E",
-    #             })
-    #     except Exception as e:
-    #         st.warning(f"KG overlay skipped: {e}")
 
 
 
@@ -985,12 +955,80 @@ st.set_page_config(page_title="Multimedia Token-based RAG", layout="wide")
 st.title("🎛️ Multimedia Token-based RAG")
 
 with st.sidebar:
-    st.markdown("### 🔑 OpenAI API")
+    with st.sidebar:
+    st.markdown("### 🔑 LLM Configuration")
     st.markdown("---")
-    if client_openai:
-        st.success("✅ OpenAI key loaded")
+
+    # ----------- LOAD KEYS FROM SECRETS -----------
+    OPENAI_KEY = st.secrets.get("openai", {}).get("api_key")
+    CLAUDE_KEY = st.secrets.get("anthropic", {}).get("api_key")
+
+    # Instantiate clients only if key exists
+    client_openai  = OpenAI(api_key=OPENAI_KEY) if OPENAI_KEY else None
+    client_claude = Anthropic(api_key=CLAUDE_KEY) if CLAUDE_KEY else None
+
+    # ----------- SHOW CONNECTION STATUS -----------
+    if OPENAI_KEY:
+        st.success("🟢 OpenAI key loaded")
     else:
-        st.error("❌ No OpenAI key found in [openai]. Check `Secrets`.")
+        st.error("🔴 No OpenAI key found under [openai].api_key")
+
+    if CLAUDE_KEY:
+        st.success("🟢 Claude key loaded")
+    else:
+        st.info("🟡 Claude not configured (optional)")
+
+    st.markdown("---")
+
+    # ----------- MODEL CHOICE -----------
+    LLM_CHOICE = st.radio(
+        "Choose Answer Engine:",
+        [
+            "OpenAI (gpt-4o-mini)",
+            "Claude (Sonnet 3.5)",
+            "Local FLAN-T5"
+        ],
+        index=0,
+    )
+
+    # Determine active model
+    if LLM_CHOICE.startswith("OpenAI") and client_openai:
+        ACTIVE_LLM = "openai"
+    elif LLM_CHOICE.startswith("Claude") and client_claude:
+        ACTIVE_LLM = "claude"
+    else:
+        ACTIVE_LLM = "flan"   # fallback
+
+    # If user selects OpenAI but key missing → fallback to FLAN
+    if LLM_CHOICE.startswith("OpenAI") and not client_openai:
+        st.warning("⚠️ Using FLAN-T5 because OpenAI key not found.")
+        ACTIVE_LLM = "flan"
+
+    # If Claude selected but missing key
+    if LLM_CHOICE.startswith("Claude") and not client_claude:
+        st.warning("⚠️ Claude key missing — falling back to FLAN-T5.")
+        ACTIVE_LLM = "flan"
+
+    # ----------- FLAN MODEL DROPDOWN -----------
+    if ACTIVE_LLM == "flan":
+        st.markdown("### 🤖 Local FLAN-T5 Settings")
+        HF_LLM_NAME = st.selectbox(
+            "FLAN-T5 size",
+            ["google/flan-t5-base", "google/flan-t5-large"],
+            index=0
+        )
+    else:
+        HF_LLM_NAME = "google/flan-t5-base"   # unused
+
+    # ----------- EMBEDDING MODEL -----------
+    EMBED_MODEL = st.text_input(
+        "Embedding model",
+        "sentence-transformers/all-MiniLM-L6-v2"
+    )
+
+
+
+
     st.markdown("**Vector DB Backend**")
     BACKEND = st.selectbox("Choose vector store", ["FAISS (local folder)", "Weaviate (remote)"], index=1)
 
@@ -2581,29 +2619,33 @@ else:
     input_variables=["question", "context"],
 )
 
-    # ---------- Stage 1: RAG draft (vector context only) ----------
-    if use_openai_model:
-        # 🔷 Use OpenAI for DRAFT
+        # ---------- Stage 1: RAG Draft ----------
+    if ACTIVE_LLM == "openai":
         resp = client_openai.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": "You are a strict retrieval-only RAG assistant."},
-                {
-                    "role": "user",
-                    "content": prompt_draft.format(
-                        question=q,
-                        context=ctx,
-                    ),
-                },
+                {"role": "user", "content": prompt_draft.format(question=q, context=ctx)}
             ],
         )
         draft_answer = resp.choices[0].message.content
-    else:
-        # 🔷 Use local FLAN-T5 for DRAFT
+
+    elif ACTIVE_LLM == "claude":
+        resp = client_claude.messages.create(
+            model="claude-3-5-sonnet-latest",
+            max_tokens=1024,
+            messages=[
+                {"role": "user", "content": prompt_draft.format(question=q, context=ctx)}
+            ]
+        )
+        draft_answer = resp.content[0].text
+
+    else:  # FLAN
         draft_answer = (prompt_draft | llm | StrOutputParser()).invoke({
             "question": q,
             "context": ctx,
         })
+
 
     # ---------- Stage 2: Polish (clarity only; no new facts) ----------
     polished_answer = None
@@ -2622,28 +2664,38 @@ else:
             {draft}
             """.strip()
 
-        if use_openai_model:
-            # 🔷 Use OpenAI for POLISH (same model as draft)
-            resp_polish = client_openai.chat.completions.create(
+    polished_answer = None
+    if polish:
+        prompt_polish = PromptTemplate(
+            template=POLISH_TEMPLATE,
+            input_variables=["draft"],
+        )
+
+        if ACTIVE_LLM == "openai":
+            resp = client_openai.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[
-                    {"role": "system", "content": "Rewrite only for clarity. Do NOT add facts."},
-                    {
-                        "role": "user",
-                        "content": POLISH_TEMPLATE.format(draft=draft_answer),
-                    },
+                    {"role": "system", "content": "Rewrite only for clarity."},
+                    {"role": "user", "content": POLISH_TEMPLATE.format(draft=draft_answer)},
                 ],
             )
-            polished_answer = resp_polish.choices[0].message.content
-        else:
-            # 🔷 Use local FLAN-T5 for POLISH
-            prompt_polish = PromptTemplate(
-                template=POLISH_TEMPLATE,
-                input_variables=["draft"],
+            polished_answer = resp.choices[0].message.content
+
+        elif ACTIVE_LLM == "claude":
+            resp = client_claude.messages.create(
+                model="claude-3-5-sonnet-latest",
+                max_tokens=1024,
+                messages=[
+                    {"role": "user", "content": POLISH_TEMPLATE.format(draft=draft_answer)}
+                ]
             )
+            polished_answer = resp.content[0].text
+
+        else:
             polished_answer = (prompt_polish | llm | StrOutputParser()).invoke({
                 "draft": draft_answer
             })
+
 
     st.subheader("Draft Answer")
     st.write(draft_answer)
