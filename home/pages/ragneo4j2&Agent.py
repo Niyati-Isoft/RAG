@@ -2700,3 +2700,4 @@ st.write("end of file")
 
 st.write("Secrets keys:", list(st.secrets.keys()))
 st.write("OpenAI section:", st.secrets.get("openai", {}))
+st.write(st.secrets.get("openai"))
