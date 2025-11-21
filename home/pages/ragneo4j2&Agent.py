@@ -1083,11 +1083,6 @@ METADATA_KEYS = [
 "source_domain" # ← new
 ]
 
-# ========================= Clients =========================
-if OPENAI_KEY:
-    client_openai = OpenAI(api_key=OPENAI_KEY)
-else:
-    client_openai = None
 
 # ========================= Caches / Singletons =========================
 
