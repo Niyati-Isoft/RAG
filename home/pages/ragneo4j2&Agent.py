@@ -2588,7 +2588,7 @@ else:
 
     elif ACTIVE_LLM == "claude":
         resp = client_claude.messages.create(
-            model="claude-3-5-sonnet-latest",
+            model="claude-3-5-haiku-latest",
             max_tokens=1024,
             messages=[
                 {"role": "user", "content": prompt_draft.format(question=q, context=ctx)}
@@ -2639,7 +2639,7 @@ else:
 
         elif ACTIVE_LLM == "claude":
             resp = client_claude.messages.create(
-                model="claude-3-5-sonnet-latest",
+                model="claude-3-5-haiku-latest",
                 max_tokens=1024,
                 messages=[
                     {"role": "user", "content": POLISH_TEMPLATE.format(draft=draft_answer)}
