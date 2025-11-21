@@ -111,7 +111,26 @@ with st.expander("Neo4j connection status", expanded=False):
 
 ###
 
+@st.cache_resource(show_spinner=False)
+def get_openai_client():
+    """
+    Create an OpenAI client using key from:
+      - st.secrets["OPENAI_API_KEY"]  (recommended)
+      - or environment variable OPENAI_API_KEY
+    Returns None if no key found.
+    """
+    key = ""
+    try:
+        key = st.secrets.get("OPENAI_API_KEY", "")
+    except Exception:
+        key = os.getenv("OPENAI_API_KEY", "")
 
+    if not key:
+        return None
+
+    return OpenAI(api_key=key)
+
+client_openai = get_openai_client()
 
 
 # ── Reusable KG readers ────────────────────────────────────────────────────────
@@ -981,9 +1000,45 @@ with st.sidebar:
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     INDEX_DIR.mkdir(parents=True, exist_ok=True)
 
-    st.markdown("**Models**")
-    HF_LLM_NAME = st.selectbox("FLAN-T5 size", ["google/flan-t5-base", "google/flan-t5-large"], index=0)
-    EMBED_MODEL = st.text_input("Embeddings model", "sentence-transformers/all-MiniLM-L6-v2")
+    st.markdown("### 🧠 Answer Engine")
+
+    ANSWER_ENGINE = st.radio(
+        "Choose answer model:",
+        ["OpenAI (gpt-4o-mini)", "Local FLAN-T5"],
+        index=0,  # Default = OpenAI
+    )
+
+    # Try to load OpenAI client (cached)
+    client_openai = get_openai_client()
+
+    # Decide whether to use OpenAI model
+    use_openai_model = (ANSWER_ENGINE.startswith("OpenAI") and client_openai is not None)
+
+    if ANSWER_ENGINE.startswith("OpenAI") and client_openai is None:
+        st.warning("⚠️ No OPENAI_API_KEY found in secrets or environment. Falling back to Local FLAN-T5.")
+        use_openai_model = False
+
+
+    # ----------------------------
+    # LLM Configuration (only shown if FLAN mode)
+    # ----------------------------
+    if not use_openai_model:
+        st.markdown("### 🤖 Local Model Settings")
+        HF_LLM_NAME = st.selectbox(
+            "Choose FLAN-T5 Size",
+            ["google/flan-t5-base", "google/flan-t5-large"],
+            index=0
+        )
+    else:
+        HF_LLM_NAME = "google/flan-t5-base"  # NOT USED — placeholder
+
+
+    # Embedding model (same for both)
+    EMBED_MODEL = st.text_input(
+        "Embeddings model",
+        "sentence-transformers/all-MiniLM-L6-v2"
+    )
+
 
     st.markdown("**Chunking (tokens)**")
     CHUNK_SIZE_TOKENS   = st.number_input("Chunk size (tokens)", 50, 1000, 200, 10)
@@ -1053,6 +1108,7 @@ def get_tokenizer_and_llm(model_name: str):
         device=0 if torch.cuda.is_available() else -1,
     )
     return tok, HuggingFacePipeline(pipeline=gen_pipe)
+
 
 
 
@@ -2515,27 +2571,33 @@ else:
     )
 
     prompt_draft = PromptTemplate(
-        template=RAG_TEMPLATE_DRAFT,
-        input_variables=["question", "context"],
-    )
-    if client_openai:
-    # 🔷 USE OPENAI COMPLETION
-            draft_answer = client_openai.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[
-                    {"role": "system", "content": "You are a strict retrieval-only RAG assistant."},
-                    {"role": "user", "content": prompt_draft.format(
-                        question=q,
-                        context=ctx
-                    )}
-                ]
-            ).choices[0].message["content"]
+    template=RAG_TEMPLATE_DRAFT,
+    input_variables=["question", "context"],
+)
 
+    # ---------- Stage 1: RAG draft (vector context only) ----------
+    if use_openai_model:
+        # 🔷 Use OpenAI for DRAFT
+        resp = client_openai.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "You are a strict retrieval-only RAG assistant."},
+                {
+                    "role": "user",
+                    "content": prompt_draft.format(
+                        question=q,
+                        context=ctx,
+                    ),
+                },
+            ],
+        )
+        draft_answer = resp.choices[0].message.content
     else:
-            draft_answer = (prompt_draft | llm | StrOutputParser()).invoke({
-                "question": q,
-                "context": ctx,
-            })
+        # 🔷 Use local FLAN-T5 for DRAFT
+        draft_answer = (prompt_draft | llm | StrOutputParser()).invoke({
+            "question": q,
+            "context": ctx,
+        })
 
     # ---------- Stage 2: Polish (clarity only; no new facts) ----------
     polished_answer = None
@@ -2554,20 +2616,25 @@ else:
             {draft}
             """.strip()
 
-        prompt_polish = PromptTemplate(
-            template=POLISH_TEMPLATE,
-            input_variables=["draft"],
-        )
-
-        if client_openai:
-            polished_answer = client_openai.chat.completions.create(
+        if use_openai_model:
+            # 🔷 Use OpenAI for POLISH (same model as draft)
+            resp_polish = client_openai.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[
                     {"role": "system", "content": "Rewrite only for clarity. Do NOT add facts."},
-                    {"role": "user", "content": POLISH_TEMPLATE.format(draft=draft_answer)},
+                    {
+                        "role": "user",
+                        "content": POLISH_TEMPLATE.format(draft=draft_answer),
+                    },
                 ],
-            ).choices[0].message["content"]
+            )
+            polished_answer = resp_polish.choices[0].message.content
         else:
+            # 🔷 Use local FLAN-T5 for POLISH
+            prompt_polish = PromptTemplate(
+                template=POLISH_TEMPLATE,
+                input_variables=["draft"],
+            )
             polished_answer = (prompt_polish | llm | StrOutputParser()).invoke({
                 "draft": draft_answer
             })
@@ -2575,7 +2642,7 @@ else:
     st.subheader("Draft Answer")
     st.write(draft_answer)
 
-    # Decide which string is the final "answer" for provenance
+    # Final answer for provenance graphs
     final_answer = polished_answer if polished_answer is not None else draft_answer
 
     if polished_answer is not None:
