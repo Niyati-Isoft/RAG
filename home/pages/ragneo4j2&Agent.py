@@ -113,39 +113,8 @@ with st.expander("Neo4j connection status", expanded=False):
 
 from openai import OpenAI
 
-
-@st.cache_resource(show_spinner=False)
-def get_openai_client():
-    """
-    Returns an OpenAI client if a key is found in:
-      1) st.secrets['openai']['OPENAI_API_KEY']  OR
-      2) environment variable OPENAI_API_KEY
-
-    Otherwise returns None.
-    """
-    # 1) from [openai] section in secrets
-    sec = getattr(st, "secrets", {})
-    openai_sec = sec.get("openai", {}) if isinstance(sec, dict) else {}
-    key = openai_sec.get("OPENAI_API_KEY", "")
-
-    # 2) fallback to env var (optional)
-    if not key:
-        key = os.getenv("OPENAI_API_KEY", "")
-
-    if not key:
-        return None
-
-    return OpenAI(api_key=key)
-
-client_openai = get_openai_client()
-
-from anthropic import Anthropic
-
-
-# load key
-ANTHROPIC_KEY = st.secrets.get("anthropic", {}).get("ANTHROPIC_API_KEY")
-
-client_claude = Anthropic(ANTHROPIC_API_KEY=ANTHROPIC_KEY) if ANTHROPIC_KEY else None
+OPENAI_KEY = st.secrets.get("openai", {}).get("OPENAI_API_KEY")
+CLAUDE_KEY = st.secrets.get("anthropic", {}).get("ANTHROPIC_API_KEY")
 
 
 # ── Reusable KG readers ────────────────────────────────────────────────────────
