@@ -904,6 +904,33 @@ trafilatura   = _optional_import("trafilatura")
 whisper       = _optional_import("whisper")
 moviepy       = _optional_import("moviepy")
 
+@st.cache_resource(show_spinner=False)
+def get_tokenizer_and_llm(model_name: str):
+    tok = AutoTokenizer.from_pretrained(model_name)
+
+    torch_dtype = torch.float16 if torch.cuda.is_available() else torch.float32
+
+    # NOTE: use torch_dtype (not dtype); do NOT set low_cpu_mem_usage or device_map
+    model = AutoModelForSeq2SeqLM.from_pretrained(
+        model_name,
+        torch_dtype=torch_dtype,
+    )
+
+    if torch.cuda.is_available():
+        model = model.to("cuda")
+
+    gen_pipe = pipeline(
+        task="text2text-generation",
+        model=model,
+        tokenizer=tok,
+        max_new_tokens=384,
+        temperature=0.4,
+        num_beams=3,
+        repetition_penalty=1.05,
+        device=0 if torch.cuda.is_available() else -1,
+    )
+    return tok, HuggingFacePipeline(pipeline=gen_pipe)
+
 # LangChain / HF
 from langchain_core.documents import Document
 from langchain_text_splitters import TokenTextSplitter  # (not used directly but kept for parity)
@@ -978,6 +1005,7 @@ with st.sidebar:
             ["google/flan-t5-base", "google/flan-t5-large"],
             index=0,
         )
+        tokenizer, llm = get_tokenizer_and_llm(HF_LLM_NAME)
     else:
         HF_LLM_NAME = None   # Not used when OpenAI/Claude selected
 
@@ -986,8 +1014,6 @@ with st.sidebar:
         "Embedding model",
         "sentence-transformers/all-MiniLM-L6-v2"
     )
-
-
 
 
     st.markdown("**Vector DB Backend**")
@@ -1048,32 +1074,7 @@ METADATA_KEYS = [
 
 
 
-@st.cache_resource(show_spinner=False)
-def get_tokenizer_and_llm(model_name: str):
-    tok = AutoTokenizer.from_pretrained(model_name)
 
-    torch_dtype = torch.float16 if torch.cuda.is_available() else torch.float32
-
-    # NOTE: use torch_dtype (not dtype); do NOT set low_cpu_mem_usage or device_map
-    model = AutoModelForSeq2SeqLM.from_pretrained(
-        model_name,
-        torch_dtype=torch_dtype,
-    )
-
-    if torch.cuda.is_available():
-        model = model.to("cuda")
-
-    gen_pipe = pipeline(
-        task="text2text-generation",
-        model=model,
-        tokenizer=tok,
-        max_new_tokens=384,
-        temperature=0.4,
-        num_beams=3,
-        repetition_penalty=1.05,
-        device=0 if torch.cuda.is_available() else -1,
-    )
-    return tok, HuggingFacePipeline(pipeline=gen_pipe)
 
 
 
@@ -1082,7 +1083,6 @@ def get_tokenizer_and_llm(model_name: str):
 def get_embedder(name: str):
     return HuggingFaceEmbeddings(model_name=name)
 
-tokenizer, llm = get_tokenizer_and_llm(HF_LLM_NAME)
 from langchain_community.embeddings import HuggingFaceEmbeddings
 embedder = HuggingFaceEmbeddings(
     model_name="sentence-transformers/all-MiniLM-L6-v2",
