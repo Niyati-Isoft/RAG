@@ -1010,40 +1010,7 @@ with st.sidebar:
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     INDEX_DIR.mkdir(parents=True, exist_ok=True)
 
-    st.markdown("### 🧠 Answer Engine")
-
-
-    OPENAI_KEY = st.secrets.get("openai", {}).get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
-    client_openai = OpenAI(api_key=OPENAI_KEY) if OPENAI_KEY else None
-
-    # Decide whether to use OpenAI model
-    use_openai_model = (LLM_CHOICE.startswith("OpenAI") and client_openai is not None)
-
-    if LLM_CHOICE.startswith("OpenAI") and client_openai is None:
-        st.warning("⚠️ No OPENAI_API_KEY found in secrets or environment. Falling back to Local FLAN-T5.")
-        use_openai_model = False
-
-
-    # ----------------------------
-    # LLM Configuration (only shown if FLAN mode)
-    # ----------------------------
-    if not use_openai_model:
-        st.markdown("### 🤖 Local Model Settings")
-        HF_LLM_NAME = st.selectbox(
-            "Choose FLAN-T5 Size",
-            ["google/flan-t5-base", "google/flan-t5-large"],
-            index=0
-        )
-    else:
-        HF_LLM_NAME = "google/flan-t5-base"  # NOT USED — placeholder
-
-
-    # Embedding model (same for both)
-    EMBED_MODEL = st.text_input(
-        "Embeddings model",
-        "sentence-transformers/all-MiniLM-L6-v2"
-    )
-
+    
 
     st.markdown("**Chunking (tokens)**")
     CHUNK_SIZE_TOKENS   = st.number_input("Chunk size (tokens)", 50, 1000, 200, 10)
