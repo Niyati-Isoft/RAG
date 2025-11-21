@@ -111,18 +111,25 @@ with st.expander("Neo4j connection status", expanded=False):
 
 ###
 
+from openai import OpenAI
+
+
 @st.cache_resource(show_spinner=False)
 def get_openai_client():
     """
-    Create an OpenAI client using key from:
-      - st.secrets["OPENAI_API_KEY"]  (recommended)
-      - or environment variable OPENAI_API_KEY
-    Returns None if no key found.
+    Returns an OpenAI client if a key is found in:
+      1) st.secrets['openai']['api_key']  OR
+      2) environment variable OPENAI_API_KEY
+
+    Otherwise returns None.
     """
-    key = ""
-    try:
-        key = st.secrets.get("OPENAI_API_KEY", "")
-    except Exception:
+    # 1) from [openai] section in secrets
+    sec = getattr(st, "secrets", {})
+    openai_sec = sec.get("openai", {}) if isinstance(sec, dict) else {}
+    key = openai_sec.get("api_key", "")
+
+    # 2) fallback to env var (optional)
+    if not key:
         key = os.getenv("OPENAI_API_KEY", "")
 
     if not key:
@@ -131,6 +138,7 @@ def get_openai_client():
     return OpenAI(api_key=key)
 
 client_openai = get_openai_client()
+
 
 
 # ── Reusable KG readers ────────────────────────────────────────────────────────
@@ -978,8 +986,11 @@ st.title("🎛️ Multimedia Token-based RAG")
 
 with st.sidebar:
     st.markdown("### 🔑 OpenAI API")
-    OPENAI_KEY = OPENAI_KEY = st.secrets["openai"]["api_key"]
-
+    st.markdown("---")
+    if client_openai:
+        st.success("✅ OpenAI key loaded")
+    else:
+        st.error("❌ No OpenAI key found in [openai]. Check `Secrets`.")
     st.markdown("**Vector DB Backend**")
     BACKEND = st.selectbox("Choose vector store", ["FAISS (local folder)", "Weaviate (remote)"], index=1)
 
@@ -2691,3 +2702,6 @@ else:
 
 
 st.write("end of file")
+
+st.write("Secrets keys:", list(st.secrets.keys()))
+st.write("OpenAI section:", st.secrets.get("openai", {}))
