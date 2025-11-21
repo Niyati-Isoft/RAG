@@ -1086,12 +1086,12 @@ def get_router(_ACTIVE_LLM, _client_openai=None, _client_claude=None):
     return ("flan", build_local_classifier("google/flan-t5-base"))
 
 
-
 router_kind, router_obj = get_router(
     ACTIVE_LLM,
-    client_openai=client_openai,
-    client_claude=client_claude
+    client_openai,
+    client_claude
 )
+
 
 
 
