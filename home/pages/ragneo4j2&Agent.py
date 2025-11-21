@@ -118,7 +118,7 @@ from openai import OpenAI
 def get_openai_client():
     """
     Returns an OpenAI client if a key is found in:
-      1) st.secrets['openai']['api_key']  OR
+      1) st.secrets['openai']['OPENAI_API_KEY']  OR
       2) environment variable OPENAI_API_KEY
 
     Otherwise returns None.
@@ -126,7 +126,7 @@ def get_openai_client():
     # 1) from [openai] section in secrets
     sec = getattr(st, "secrets", {})
     openai_sec = sec.get("openai", {}) if isinstance(sec, dict) else {}
-    key = openai_sec.get("api_key", "")
+    key = openai_sec.get("OPENAI_API_KEY", "")
 
     # 2) fallback to env var (optional)
     if not key:
@@ -143,9 +143,9 @@ from anthropic import Anthropic
 
 
 # load key
-ANTHROPIC_KEY = st.secrets.get("anthropic", {}).get("api_key")
+ANTHROPIC_KEY = st.secrets.get("anthropic", {}).get("ANTHROPIC_API_KEY")
 
-client_claude = Anthropic(api_key=ANTHROPIC_KEY) if ANTHROPIC_KEY else None
+client_claude = Anthropic(ANTHROPIC_API_KEY=ANTHROPIC_KEY) if ANTHROPIC_KEY else None
 
 
 # ── Reusable KG readers ────────────────────────────────────────────────────────
@@ -959,8 +959,8 @@ with st.sidebar:
     st.markdown("---")
 
     # ----------- LOAD KEYS FROM SECRETS -----------
-    OPENAI_KEY = st.secrets.get("openai", {}).get("api_key")
-    CLAUDE_KEY = st.secrets.get("anthropic", {}).get("api_key")
+    OPENAI_KEY = st.secrets.get("openai", {}).get("OPENAI_API_KEY")
+    CLAUDE_KEY = st.secrets.get("anthropic", {}).get("ANTHROPIC_API_KEY")
 
     # Instantiate clients only if key exists
     client_openai  = OpenAI(api_key=OPENAI_KEY) if OPENAI_KEY else None
@@ -970,12 +970,12 @@ with st.sidebar:
     if OPENAI_KEY:
         st.success("🟢 OpenAI key loaded")
     else:
-        st.error("🔴 No OpenAI key found under [openai].api_key")
+        st.error("🔴 No OpenAI key found under [openai].OPENAI_API_KEY")
 
     if CLAUDE_KEY:
         st.success("🟢 Claude key loaded")
     else:
-        st.info("🟡 Claude not configured (optional)")
+        st.error("🔴 No Claude key found under [anthropic].ANTHROPIC_API_KEY")
 
     st.markdown("---")
 
