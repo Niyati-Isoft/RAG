@@ -875,37 +875,6 @@ def show_chunk_entity_output_graph2(
     _render_pyvis_or_fallback(net, nodes_list, edges_list, height_px=580)
 
 
-
-
-
-
-
-
-
-
-@st.cache_resource(show_spinner=False)
-def get_router(active_llm, client_openai=None, client_claude=None):
-    """
-    Returns:
-      - cloud classifier (openai/claude) if selected + key available
-      - FLAN classifier otherwise
-    """
-    if active_llm == "openai" and client_openai:
-        return ("openai", client_openai)
-
-    if active_llm == "claude" and client_claude:
-        return ("claude", client_claude)
-
-    # fallback → FLAN-T5
-    return ("flan", build_local_classifier("google/flan-t5-base"))
-
-
-router_kind, router_obj = get_router(
-    ACTIVE_LLM,
-    client_openai=client_openai,
-    client_claude=client_claude
-)
-
 # ---- Optional deps that may not exist everywhere ----
 def _optional_import(name, alias=None):
     try:
@@ -1101,7 +1070,28 @@ METADATA_KEYS = [
 
 # ========================= Caches / Singletons =========================
 
+@st.cache_resource(show_spinner=False)
+def get_router(ACTIVE_LLM, client_openai=None, client_claude=None):
+    """
+    Returns:
+      - cloud classifier (openai/claude) if selected + key available
+      - FLAN classifier otherwise
+    """
+    if ACTIVE_LLM == "openai" and client_openai:
+        return ("openai", client_openai)
 
+    if ACTIVE_LLM == "claude" and client_claude:
+        return ("claude", client_claude)
+
+    # fallback → FLAN-T5
+    return ("flan", build_local_classifier("google/flan-t5-base"))
+
+
+router_kind, router_obj = get_router(
+    ACTIVE_LLM,
+    client_openai=client_openai,
+    client_claude=client_claude
+)
 
 
 
