@@ -34,7 +34,12 @@ from anthropic import Anthropic
 ROOT_DIR = os.path.dirname(os.path.dirname(__file__))  # one level up from pages/
 if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
-from routeragentai import build_local_classifier, classify_question_llm as classify_question,classify_question_cloud_openai, classify_question_cloud_claude
+from routeragentai import (
+    build_local_classifier,
+    classify_question_llm,
+    classify_question_cloud_openai,
+    classify_question_cloud_claude,
+)
 
 # ==== KG imports (NEW) ====
 from kg_extract import extract_entities, extract_triples_rules
