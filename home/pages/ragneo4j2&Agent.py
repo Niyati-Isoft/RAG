@@ -927,23 +927,16 @@ with st.sidebar:
     st.markdown("---")
 
     # ----------- LOAD KEYS FROM SECRETS -----------
-    OPENAI_KEY = st.secrets.get("openai", {}).get("OPENAI_API_KEY")
-    CLAUDE_KEY = st.secrets.get("anthropic", {}).get("ANTHROPIC_API_KEY")
+    OPENAI_KEY  = st.secrets.get("openai", {}).get("OPENAI_API_KEY")
+    CLAUDE_KEY  = st.secrets.get("anthropic", {}).get("ANTHROPIC_API_KEY")
 
     # Instantiate clients only if key exists
     client_openai  = OpenAI(api_key=OPENAI_KEY) if OPENAI_KEY else None
     client_claude = Anthropic(api_key=CLAUDE_KEY) if CLAUDE_KEY else None
 
-    # ----------- SHOW CONNECTION STATUS -----------
-    if OPENAI_KEY:
-        st.success("🟢 OpenAI key loaded")
-    else:
-        st.error("🔴 No OpenAI key found under [openai].OPENAI_API_KEY")
-
-    if CLAUDE_KEY:
-        st.success("🟢 Claude key loaded")
-    else:
-        st.error("🔴 No Claude key found under [anthropic].ANTHROPIC_API_KEY")
+    # Connection status
+    st.success("🟢 OpenAI key loaded") if client_openai else st.error("🔴 No OpenAI key found")
+    st.success("🟢 Claude key loaded") if client_claude else st.info("🟡 Claude not configured")
 
     st.markdown("---")
 
@@ -953,39 +946,40 @@ with st.sidebar:
         [
             "OpenAI (gpt-4o-mini)",
             "Claude (Sonnet 3.5)",
-            "Local FLAN-T5"
+            "Local FLAN-T5",
         ],
         index=0,
     )
 
-    # Determine active model
+    # Normalize to internal engine name
     if LLM_CHOICE.startswith("OpenAI") and client_openai:
         ACTIVE_LLM = "openai"
+
     elif LLM_CHOICE.startswith("Claude") and client_claude:
         ACTIVE_LLM = "claude"
-    else:
-        ACTIVE_LLM = "flan"   # fallback
 
-    # If user selects OpenAI but key missing → fallback to FLAN
+    else:
+        ACTIVE_LLM = "flan"   # Fallback model
+
+    # User selected model but key missing
     if LLM_CHOICE.startswith("OpenAI") and not client_openai:
         st.warning("⚠️ Using FLAN-T5 because OpenAI key not found.")
         ACTIVE_LLM = "flan"
 
-    # If Claude selected but missing key
     if LLM_CHOICE.startswith("Claude") and not client_claude:
         st.warning("⚠️ Claude key missing — falling back to FLAN-T5.")
         ACTIVE_LLM = "flan"
 
-    # ----------- FLAN MODEL DROPDOWN -----------
+    # ----------- FLAN SETTINGS -----------
     if ACTIVE_LLM == "flan":
         st.markdown("### 🤖 Local FLAN-T5 Settings")
         HF_LLM_NAME = st.selectbox(
             "FLAN-T5 size",
             ["google/flan-t5-base", "google/flan-t5-large"],
-            index=0
+            index=0,
         )
     else:
-        HF_LLM_NAME = "google/flan-t5-base"   # unused
+        HF_LLM_NAME = None   # Not used when OpenAI/Claude selected
 
     # ----------- EMBEDDING MODEL -----------
     EMBED_MODEL = st.text_input(
@@ -1018,19 +1012,14 @@ with st.sidebar:
 
     st.markdown("### 🧠 Answer Engine")
 
-    ANSWER_ENGINE = st.radio(
-        "Choose answer model:",
-        ["OpenAI (gpt-4o-mini)", "Local FLAN-T5"],
-        index=0,  # Default = OpenAI
-    )
 
     OPENAI_KEY = st.secrets.get("openai", {}).get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
     client_openai = OpenAI(api_key=OPENAI_KEY) if OPENAI_KEY else None
 
     # Decide whether to use OpenAI model
-    use_openai_model = (ANSWER_ENGINE.startswith("OpenAI") and client_openai is not None)
+    use_openai_model = (LLM_CHOICE.startswith("OpenAI") and client_openai is not None)
 
-    if ANSWER_ENGINE.startswith("OpenAI") and client_openai is None:
+    if LLM_CHOICE.startswith("OpenAI") and client_openai is None:
         st.warning("⚠️ No OPENAI_API_KEY found in secrets or environment. Falling back to Local FLAN-T5.")
         use_openai_model = False
 
@@ -2599,7 +2588,7 @@ else:
 
     elif ACTIVE_LLM == "claude":
         resp = client_claude.messages.create(
-            model="claude-3-5-sonnet-latest",
+            model="claude-3-5-sonnet-20240620",
             max_tokens=1024,
             messages=[
                 {"role": "user", "content": prompt_draft.format(question=q, context=ctx)}
@@ -2650,7 +2639,7 @@ else:
 
         elif ACTIVE_LLM == "claude":
             resp = client_claude.messages.create(
-                model="claude-3-5-sonnet-latest",
+                model="claude-3-5-sonnet-20240620",
                 max_tokens=1024,
                 messages=[
                     {"role": "user", "content": POLISH_TEMPLATE.format(draft=draft_answer)}
